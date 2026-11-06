@@ -238,6 +238,7 @@ def test_create_wallet_is_idempotent_and_links_the_wallet_on_chain(tmp_path):
         svc.create_wallet(person, "not-an-email")
     out = svc.create_wallet(person, "me@example.com")
     assert out["address"] == "0x" + "ee" * 20 and svc.managed_sub_org(out["address"]) == "sub-1"
+    assert svc.whoami(person)["wallets"] == [out["address"]]  # usable at once, before the indexer sees the event
     assert chain.sent[-1][:2] == ("PersonRegistry", "register") and chain.sent[-1][3] == bytes.fromhex(person[2:])
     policies = tk.created[0][2]
     assert {p["policyName"] for p in policies} >= {"Lore: Access.buy", "Lore: Submissions.vote"}
