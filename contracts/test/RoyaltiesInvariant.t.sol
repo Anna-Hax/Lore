@@ -45,9 +45,9 @@ contract RoyaltiesHandler is Test {
         uint256 topics = graph.topicCount();
         if (topics == 0) return;
         uint256 topicId = 1 + topicSeed % topics;
-        price = bound(price, 0, 1_000_000e6);
         vm.prank(admin);
-        access.setTopicPrice(price);
+        access.setNodeValue(bound(price, 0, 1_000_000e6));
+        price = access.priceOf(topicId);
 
         address buyer = address(uint160(0xB0000 + ++buyerNonce));
         usdc.mint(buyer, price);
@@ -109,10 +109,9 @@ contract RoyaltiesInvariantTest is Base {
 
     /// @notice Stateless fuzz of one sale: shares + treasury add up to the price exactly.
     function testFuzz_distributeConserves(uint256 price, uint8 extraNodes, uint16 cutBps) public {
-        price = bound(price, 0, 1_000_000_000e6);
         cutBps = uint16(bound(cutBps, 0, 10_000));
         royalties.setPlatformCutBps(cutBps);
-        access.setTopicPrice(price);
+        access.setNodeValue(bound(price, 0, 50_000_000e6));
 
         graph.setSubmissions(address(this));
         _ensurePerson(makeAddr("a"));
@@ -122,6 +121,8 @@ contract RoyaltiesInvariantTest is Base {
             graph.addNode(t, makeAddr("a"), keccak256(abi.encode(i)), 0, new uint256[](0));
         }
 
+        price = access.priceOf(t);
+        assertEq(price, access.nodeValue() * n);
         _buy(makeAddr("buyer"), t);
         uint256 shares = royalties.claimable(1) * n;
         assertEq(shares + usdc.balanceOf(treasury), price);

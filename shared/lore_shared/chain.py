@@ -62,7 +62,7 @@ class ChainReader:
             "voting_window": self.call("Submissions", "votingWindow"),
             "stake": self.call("Submissions", "stake"),
             "stake_fee": self.call("Submissions", "stakeFee"),
-            "topic_price": self.call("Access", "topicPrice"),
+            "node_value": self.call("Access", "nodeValue"),
             "topic_count": self.call("TopicGraph", "topicCount"),
             "submission_count": self.call("Submissions", "submissionCount"),
             "treasury": self.call("LoreRoles", "treasury"),

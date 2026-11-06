@@ -45,6 +45,8 @@ def apply(db, event: str, a: dict, block: int, idx: int, ts: int) -> None:
             q("UPDATE nodes SET meta_hash=?, meta_json=NULL WHERE id=?", (hexstr(a["metaHash"]), a["nodeId"]))
         case "TopicMetaSet":
             q("UPDATE topics SET meta_hash=?, meta_json=NULL WHERE id=?", (hexstr(a["metaHash"]), a["topicId"]))
+        case "Distributed":
+            q("INSERT OR IGNORE INTO sales VALUES (?, ?, ?, ?)", (block, idx, a["topicId"], a["amount"]))
         case "Bought":
             q("INSERT OR IGNORE INTO purchases VALUES (?, ?)", (a["topicId"], a["buyer"].lower()))
         case "LeakReported":

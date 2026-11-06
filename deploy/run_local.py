@@ -5,8 +5,9 @@
 Each service gets only its own secret file from deploy/secrets/ (made by create_secrets.py), like launch.py does in
 Docker. State lives in deploy/state/. The gateway runs Lore's labelled demo login because World ID is not configured
 locally (LORE_DEMO_LOGIN=1). Needs uv, and a built storage CLI (python shared/storage_cli/build.py).
-The gateway signs users' transactions through Turnkey: export TURNKEY_ORGANIZATION_ID, TURNKEY_API_PUBLIC_KEY and
-TURNKEY_DELEGATED_PUBLIC_KEY (from secrets/addresses.json) first; the private keys come from secrets/gateway.env.
+The gateway signs users' transactions through Turnkey: put TURNKEY_ORGANIZATION_ID, TURNKEY_API_PUBLIC_KEY and
+TURNKEY_DELEGATED_PUBLIC_KEY (from secrets/addresses.json) in deploy/secrets/public.env, or export them; the private
+keys come from secrets/gateway.env.
 Ctrl+C stops all three.
 """
 
@@ -25,8 +26,13 @@ GATEWAY = f"http://127.0.0.1:{PORT}"
 
 
 def secrets(service: str) -> dict:
+    """deploy/secrets/<service>.env, plus (for the gateway) the non-secret config in public.env if present:
+    TURNKEY_ORGANIZATION_ID, TURNKEY_API_PUBLIC_KEY, TURNKEY_DELEGATED_PUBLIC_KEY (and WORLD_* once enabled)."""
     out = {}
-    for line in (SECRETS / f"{service}.env").read_text().splitlines():
+    files = [SECRETS / f"{service}.env"]
+    if service == "gateway" and (SECRETS / "public.env").is_file():
+        files.insert(0, SECRETS / "public.env")
+    for line in (l for f in files for l in f.read_text().splitlines()):
         name, sep, value = line.partition("=")
         if sep and value and not line.startswith("#"):
             out[name.strip()] = value.strip()

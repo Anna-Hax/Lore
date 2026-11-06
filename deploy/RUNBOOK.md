@@ -8,7 +8,6 @@ users connect to (`$LORE_PUBLIC_URL/mcp`, World ID login). Status: the compose f
 These need people or credentials, so they are not automated:
 
 - `agents/` merged, with P1's wiring from `e2e/DELIVERY_HANDOFF.md`.
-- `shared/storage_cli/bin/lore-storage-client` built (`python shared/storage_cli/build.py`).
 - A host with Docker Compose and a `lore` user with uid 10001. On Azure, `azure.sh` makes one (below).
 - A 0G Router API key created with `trust_mode: "private"`.
 
@@ -39,22 +38,64 @@ everything with `az group delete -n lore`.
 cd deploy
 python create_secrets.py                  # refuses to overwrite; prints addresses only
 # Add ZG_API_KEY to secrets/verifier.env and secrets/curator.env.
+# Add TURNKEY_API_PRIVATE_KEY and WORLD_RP_SIGNING_KEY to secrets/gateway.env.
 # Fund every wallet in secrets/addresses.json with testnet 0G: https://faucet.0g.ai
 # Ask P2 to grant roles: gateway=LEAK_DETECTOR and REGISTRAR, verifier=VERIFIER, curator=CURATOR.
 python check_roles.py                     # exit 0 only when roles and gas are in place
 mkdir -p state/gateway state/verifier state/curator
 sudo chown -R 10001:10001 state
-ZG_MODEL=glm-5.3 docker compose up -d --build
+docker compose up -d --build              # reads deploy/.env (below); also builds the 0G Storage CLI
 ```
 
-The gateway binds to `127.0.0.1:8080`. Caddy (`Caddyfile`) serves it over TLS and keeps `/internal/*` private.
+`docker compose` reads these from `deploy/.env` (none are secrets; the keys stay in `secrets/`):
+
+```sh
+LORE_PUBLIC_URL=https://<label>.malaysiawest.cloudapp.azure.com
+ZG_MODEL=glm-5.3
+TURNKEY_ORGANIZATION_ID=...  TURNKEY_API_PUBLIC_KEY=...  TURNKEY_DELEGATED_PUBLIC_KEY=...  # one per line
+WORLD_APP_ID=...  WORLD_RP_ID=...        # World ID login (spike W1)
+# or, until World ID works: leave WORLD_APP_ID empty and set
+LORE_DEMO_LOGIN=1
+```
+
+**Demo login is for testnet demos only.** Each name typed on the login page is one person, so anyone who types
+`ada` acts as ada, including spending ada's Lore wallet. Use it only with MockUSDC and small test 0G, and switch to
+World ID (set `WORLD_APP_ID`, which turns demo login off) before anyone puts real value in.
+
+The gateway binds to `127.0.0.1:8080`. Caddy (`Caddyfile`) serves it over TLS and keeps `/internal/*` private. The
+explorer is at `/app/`.
 Back up `secrets/` and `state/` off the host; `MASTER_KEY` loss loses all content.
+
+### World ID configuration
+
+Set `WORLD_APP_ID` and `WORLD_RP_ID` from the World Developer Portal in the
+Compose environment (or `deploy/.env`), with `WORLD_ACTION=lore-person` unless
+the configured action differs. Put `WORLD_RP_SIGNING_KEY` only in
+`deploy/secrets/gateway.env`: the 32-byte hex key, optionally prefixed with `0x`,
+must correspond to the signing key registered for that RP. The template leaves
+it blank deliberately; startup refuses missing, blank or malformed keys.
+Existing installations must add this entry before restarting the gateway.
+The verifier and curator do not receive this key.
+
+Compose defaults `WORLD_IDKIT_MODULE` to the spike's pinned ESM URL:
+`https://cdn.jsdelivr.net/npm/@worldcoin/idkit-core@4.6.0/+esm`.
+Override it with a tested self-hosted bundle URL if needed. The pin has offline
+SDK evidence, but browser loading and real World verification remain untested.
+RP request signing (`gateway/worldid.py`, a port of idkit-server 1.2.0 `signRequest`) and the login page's
+request/result handling are implemented and unit-tested; a real World App login has not been completed yet.
+Login through World ID Agent Pass (World IdP, `WORLD_IDP_*`) has run live; see
+[docs/world-id-agent-pass.md](../docs/world-id-agent-pass.md).
+**Run one set of Lore services per deployment.** If two gateways or verifiers with roles watch the same
+contracts, whichever is faster acts first: another gateway's verifier fails submissions it never ingested.
+
+**Turnkey's free plan caps signing.** Every user transaction is a Turnkey signature; past the quota Turnkey
+answers 429 and every chain-changing tool fails ("Turnkey didn't sign …"). Use a paid plan for anything beyond a test.
 
 ## Redeploy
 
 ```sh
 git pull
-ZG_MODEL=glm-5.3 docker compose up -d --build
+docker compose up -d --build
 docker compose ps
 ```
 
@@ -78,6 +119,7 @@ exposed and rotate it.
 | `ZG_API_KEY` | Create a new private-mode key, edit the env files, `docker compose up -d`. | Keep `trust_mode: "private"`. |
 | Storage wallets | Put a new funded key in the service's env file and restart. | Safe at any time. |
 | Role wallets | P2 grants the role to the new address, restart, then P2 revokes the old one. | Don't revoke first. |
+| `WORLD_RP_SIGNING_KEY` | Register the replacement key for the World RP, update `secrets/gateway.env`, then recreate the gateway. | Keep the RP registration and deployed key in sync; test a real login. |
 | `MASTER_KEY` | **Do not rotate in v1.** | Blobs have no key version; old content becomes unreadable. |
 | `WM_SECRET` | **Do not rotate in v1.** | Marks have no key version; past deliveries become untraceable. |
 

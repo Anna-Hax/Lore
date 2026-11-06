@@ -27,7 +27,8 @@ from pathlib import Path
 
 from eth_utils import keccak
 from fastapi import Depends, FastAPI, Header, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import Request
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from gateway.mcp_server import build_mcp
@@ -35,6 +36,7 @@ from gateway.oauth import WorldIDOAuth
 from gateway.service import Service
 from gateway.signer import Signer
 from gateway.worldid import WorldIDError
+from gateway.worldidp import WorldIdPError, person_of
 
 LOGIN_PAGE = """<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
 <title>Log in to Lore</title>
@@ -54,13 +56,15 @@ document.getElementById("go").addEventListener("click", async (ev) => {
   try {
     const r = await fetch("/login/request?pending=" + encodeURIComponent(pending)); const req = await r.json();
     if (!r.ok) throw new Error(req.detail || r.status);
-    // ponytail: IDKit 4.0 core API as documented (IDKit.request + orbLegacy preset); pin and confirm in spike W1.
+    // IDKit 4.6 core (pinned in gateway/worldid.py): IDKit.request + orbLegacy preset.
     const { IDKit, orbLegacy } = await import(req.idkit_module);
-    const request = await IDKit.request({ app_id: req.app_id, action: req.action, rp_context: req.rp_context })
-                               .preset(orbLegacy({ signal: req.signal }));
+    const request = await IDKit.request({ app_id: req.app_id, action: req.action, rp_context: req.rp_context,
+                                          allow_legacy_proofs: true }).preset(orbLegacy({ signal: req.signal }));
     const a = document.getElementById("l"); a.href = request.connectorURI; a.hidden = false;
     say("Open this link with World App on your phone (or scan it there), then approve.");
-    const result = await request.pollUntilCompletion();
+    const outcome = await request.pollUntilCompletion();  // {success, result} or {success: false, error}; never throws
+    if (!outcome.success) throw new Error(outcome.error);
+    const result = outcome.result;
     say("Checking your proof\\u2026");
     const done = await fetch("/login/complete?pending=" + encodeURIComponent(pending),
                              { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(result) });
@@ -103,6 +107,13 @@ def demo_person(name: str) -> str:
     return "0x" + keccak(("lore-demo-person:" + name.strip().lower()).encode()).hex()
 
 
+PAGE = """<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
+<title>__T__ · Lore</title><style>body{font:16px system-ui,sans-serif;max-width:36rem;margin:3rem auto;padding:0 1rem}
+.act{font-size:1.15rem;font-weight:600;padding:.75rem 1rem;border:1px solid #8884;border-radius:.5rem}
+.btn{display:inline-block;padding:.6rem 1.2rem;border-radius:.5rem;background:#e5341b;color:#fff;text-decoration:none;
+margin-right:1rem}</style></head><body><h1>__T__</h1>__B__</body></html>"""
+
+
 def login_page(p: dict, demo: bool = False) -> str:
     """The consent screen. Every value from the client is escaped: client names are attacker-chosen."""
     return ((DEMO_LOGIN_PAGE if demo else LOGIN_PAGE).replace("__CLIENT__", html.escape(p["client_name"]))
@@ -113,7 +124,8 @@ def login_page(p: dict, demo: bool = False) -> str:
 def create_app(db_path: str, chain, content, storage, now=lambda: int(time.time()), *, world=None,
                service_token: str | None = None, public_url: str = "http://127.0.0.1:8080",
                provider_signer=None, turnkey=None, demo_login: bool = False, site_dir: str | None = None,
-               chain_info: dict | None = None, warm_overview: bool = False) -> FastAPI:
+               chain_info: dict | None = None, warm_overview: bool = False, idp=None,
+               approve_base: str | None = None) -> FastAPI:
     """world: gateway.worldid.WorldID (None: nobody can log in, unless demo_login). service_token: the verifier/curator
     secret. turnkey: gateway.turnkey.Turnkey (None: no wallets, so nothing can be signed). demo_login: only when World
     ID is not configured, a clearly labelled name-based demo login (testnet demos)."""
@@ -194,11 +206,85 @@ def create_app(db_path: str, chain, content, storage, now=lambda: int(time.time(
             raise HTTPException(404, "this login expired; start again from your MCP client")
         return p
 
-    demo = demo_login and world is None
+    demo = demo_login and world is None and idp is None
+    if idp is not None:
+        service.approve_base = (approve_base or public_url).rstrip("/")
+
+    def page(title: str, body: str, status: int = 200) -> HTMLResponse:
+        return HTMLResponse(PAGE.replace("__T__", html.escape(title)).replace("__B__", body), status_code=status)
+
+    def begin(purpose: str, *, pending: str | None = None, checkpoint: str | None = None) -> RedirectResponse:
+        url, a = idp.authorize_url(fresh=purpose == "checkpoint")
+        with service.tx() as conn:
+            conn.execute("INSERT INTO idp_attempts VALUES (?, ?, ?, ?, ?, ?, ?)",
+                         (a["state"], a["nonce"], a["verifier"], purpose, pending, checkpoint, a["created"]))
+        return RedirectResponse(url, status_code=303)
+
+    @app.get("/checkpoint/{cid}", response_class=HTMLResponse)
+    def checkpoint_page(cid: str):
+        r = service.checkpoint_row(cid)
+        if idp is None or r is None:
+            return page("Not found", "<p>No such approval.</p>", 404)
+        if r["status"] != "pending":
+            return page("Approval " + r["status"], f"<p>This request is <b>{html.escape(r['status'])}</b>"
+                        f" ({html.escape(r['reason'] or '')}).</p>")
+        return page("Approve an agent action", f"""<p>Your agent wants Lore to:</p>
+<p class="act">{html.escape(r['action'])}</p>
+<p>Lore will sign this from your wallet only after you confirm it is you, right now, with World ID. If you did not
+ask your agent to do this, close this page: nothing happens.</p>
+<p><a class="btn" href="/checkpoint/{html.escape(cid)}/start">Approve with World ID</a>
+<a href="/checkpoint/{html.escape(cid)}/deny">Deny</a></p>""")
+
+    @app.get("/checkpoint/{cid}/start")
+    def checkpoint_start(cid: str):
+        r = service.checkpoint_row(cid)
+        if idp is None or r is None or r["status"] != "pending":
+            return checkpoint_page(cid)
+        return begin("checkpoint", checkpoint=cid)
+
+    @app.get("/checkpoint/{cid}/deny", response_class=HTMLResponse)
+    def checkpoint_deny(cid: str):
+        service.decide(cid, False, "denied by the person")
+        return checkpoint_page(cid)
+
+    @app.get("/login/callback", response_class=HTMLResponse)
+    def idp_callback(request: Request):
+        q = dict(request.query_params)
+        with service.tx() as conn:  # single use: the attempt is consumed whatever the outcome
+            a = conn.execute("DELETE FROM idp_attempts WHERE state=? RETURNING *", (q.get("state", ""),)).fetchone()
+        if idp is None or a is None:
+            return page("Not valid", "<p>Unknown or already used sign-in attempt. Nothing was authorized.</p>", 400)
+        a = dict(a)
+        try:
+            claims = idp.finish(a, q, fresh=a["purpose"] == "checkpoint")
+            who = person_of(claims["iss"], claims["sub"])
+        except WorldIdPError as e:
+            if a["purpose"] == "checkpoint":
+                status = "expired" if str(e).startswith("expired") else "denied"
+                service.decide(a["checkpoint"], False, str(e)) if status == "denied" else service.checkpoint_row(a["checkpoint"])
+                return page("Not approved", f"<p>Not approved: {html.escape(str(e))}. Nothing was signed or sent.</p>", 403)
+            return page("Login failed", f"<p>{html.escape(str(e))}</p>", 403)
+        if a["purpose"] == "login":
+            redirect = oauth.complete_login(a["pending"], who)
+            if redirect is None:
+                return page("Login expired", "<p>This login expired; start again from your MCP client.</p>", 404)
+            return RedirectResponse(redirect, status_code=303)
+        r = service.checkpoint_row(a["checkpoint"])
+        if r is None or r["status"] != "pending":
+            return page("Not approved", "<p>This request is no longer pending. Nothing was signed or sent.</p>", 409)
+        if r["person"] != who:
+            service.decide(a["checkpoint"], False, "a different World ID approved")
+            return page("Not approved", "<p>That World ID is not the person who owns this agent. Nothing was sent.</p>", 403)
+        service.decide(a["checkpoint"], True, f"fresh World ID ({claims.get('acr', '').rsplit('/', 1)[-1]})")
+        return page("Approved", f"<p>Approved: <b>{html.escape(r['action'])}</b>.</p><p>Tell your agent to continue "
+                                "(it calls <code>lore_continue</code>); the approval works once and expires in 5 minutes.</p>")
 
     @app.get("/login", response_class=HTMLResponse)
     def login(pending: str):
-        return login_page(pending_or_404(pending), demo)
+        p = pending_or_404(pending)
+        if idp is not None:  # World ID Agent Pass: straight to World IdP
+            return begin("login", pending=pending)
+        return login_page(p, demo)
 
     @app.post("/login/demo")
     def login_demo(pending: str, body: dict):

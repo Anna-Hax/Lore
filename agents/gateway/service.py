@@ -8,6 +8,7 @@ Plaintext only leaves after a live on-chain check: access (buyers) or vote eligi
 """
 
 import json
+import secrets
 import re
 import threading
 import time
@@ -24,6 +25,8 @@ from gateway.turnkey import RETRY_WINDOW_MS, lore_policies
 INGEST_TTL = 600  # an ingest must be submitted on-chain within 10 min, so it can't skip votes assigned later
 MAX_LAG = 60      # blocks (~30 s on 0G): refuse ingests while the indexer is behind, or the vote gate is blind
 NO_WALLET = "You don't have a wallet yet: create one with lore_create_wallet, then fund it with 0G (gas) and USDC."
+LINK_MESSAGE = "Link wallet {wallet} to Lore person {person} on chain {chain_id}."
+BANNED = "You were removed from Lore after a proven leak of paid research; you can't buy, read, submit or vote."
 POLICY_CALLS = {"USDC": ["approve"], "Submissions": ["submit", "vote"], "Access": ["buy"], "Royalties": ["claim"],
                 "Reports": ["report"]}  # everything Lore may sign from a user's wallet
 
@@ -77,6 +80,42 @@ class Service:
             return {"person": person, "wallets": self.wallets(conn, person)}
 
     # --- wallets (Turnkey, delegated access) ---
+    # --- self-held wallets: the fallback when Lore doesn't sign (no Turnkey, or Turnkey unavailable) ---
+    def link_message(self, person: str, wallet: str) -> str:
+        from web3 import Web3
+
+        return LINK_MESSAGE.format(wallet=Web3.to_checksum_address(wallet), person=person.lower(),
+                                   chain_id=self.chain.chain_id or self.chain.w3.eth.chain_id)
+
+    def link_wallet(self, person: str, wallet: str, signature: str) -> dict:
+        """Link a wallet the person proves they hold (they signed link_message with it) to them, on-chain.
+
+        Lore never signs for such a wallet: its tools return unsigned transactions that the person's agent signs
+        and sends locally, so their own key is their approval. The signature only ever links that wallet to that person.
+        """
+        from eth_account import Account
+        from eth_account.messages import encode_defunct
+
+        try:
+            signer = Account.recover_message(encode_defunct(text=self.link_message(person, wallet)), signature=signature)
+        except Exception as e:
+            raise LoreError(f"unreadable signature: {e}") from e
+        if signer.lower() != wallet.lower():
+            raise LoreError("that signature is not from this wallet; sign the exact message lore_link_wallet returned")
+        current = self.chain.person_of(wallet)
+        if current and current.lower() != person.lower():
+            raise LoreError("that wallet is already linked to another person")
+        if not current:
+            self.chain.send("PersonRegistry", "register", self.chain._a(wallet), bytes.fromhex(person.removeprefix("0x")))
+        with self.tx() as conn:
+            conn.execute("INSERT OR IGNORE INTO persons VALUES (?, ?)", (wallet.lower(), person.lower()))
+        return self.whoami(person)
+
+    def self_signed(self, prepared: dict) -> bool:
+        """True when the action's wallet is one Lore holds no key for: its transactions go back unsigned."""
+        txs = prepared.get("transactions") or []
+        return bool(txs) and self.managed_sub_org(txs[0]["from"]) is None
+
     def managed_sub_org(self, address: str) -> str | None:
         """The Turnkey sub-org of a wallet Lore manages, or None."""
         with self.tx() as conn:
@@ -128,6 +167,8 @@ class Service:
                     if (self.chain.person_of(address) or "").lower() != person.lower():  # not a lost race: real failure
                         raise LoreError(f"linking your wallet to your World ID failed ({e}); call lore_create_wallet"
                                         " again") from e
+            with self.tx() as conn:  # the indexer records it too; this makes the wallet usable right away
+                conn.execute("INSERT OR IGNORE INTO persons VALUES (?, ?)", (address, person.lower()))
         return {"address": address, "next": "fund it with 0G (gas) and USDC, then you can buy, submit and vote. Lore"
                 " can spend this wallet on Lore actions, so keep only what you mean to spend here"}
 
@@ -138,8 +179,86 @@ class Service:
                                                   (person,))}
         return {"wallets": [{"address": w, "lore_can_sign": w in managed, **self.chain.balances(w)} for w in mine]}
 
+    # --- human checkpoints (World ID Agent Pass): Lore signs nothing for an agent until its person approves ---
+    CHECKPOINT_TTL = 600     # seconds to approve
+    APPROVAL_TTL = 300       # seconds an approval stays usable
+    approve_base = None      # e.g. https://localhost:8443; set by create_app when World IdP is configured
+
+    def checkpoint(self, person: str, action: str, prepared: dict) -> dict:
+        """Hold a prepared action (its transactions, never plaintext) until the person approves it with World ID.
+
+        Only for wallets Lore signs for (Turnkey). A self-held wallet's transactions go back unsigned: the person's
+        own signature is their approval, so there is nothing for Lore to hold."""
+        if not self.approve_base or self.self_signed(prepared):
+            return self.send(prepared)
+        cid = secrets.token_urlsafe(12)
+        with self.tx() as conn:
+            conn.execute("INSERT INTO checkpoints VALUES (?, ?, ?, ?, 'pending', ?, NULL, NULL, NULL)",
+                         (cid, person, action, json.dumps(prepared), self.now()))
+        return {"human_approval_required": True, "checkpoint_id": cid, "action": action,
+                "approve_url": f"{self.approve_base}/checkpoint/{cid}", "expires_in_seconds": self.CHECKPOINT_TTL,
+                "next": "Ask your human to open approve_url and approve with World ID, then call lore_continue."}
+
+    def checkpoint_row(self, cid: str) -> dict | None:
+        with self.tx() as conn:
+            r = conn.execute("SELECT * FROM checkpoints WHERE id=?", (cid,)).fetchone()
+            if r and r["status"] == "pending" and self.now() - r["created"] > self.CHECKPOINT_TTL:
+                conn.execute("UPDATE checkpoints SET status='expired', decided=?, reason=? WHERE id=? AND status='pending'",
+                             (self.now(), "not approved in time", cid))
+                r = conn.execute("SELECT * FROM checkpoints WHERE id=?", (cid,)).fetchone()
+        return dict(r) if r else None
+
+    def decide(self, cid: str, approved: bool, reason: str) -> dict | None:
+        """Record a World ID outcome for a pending checkpoint (only ever moves pending -> approved/denied)."""
+        with self.tx() as conn:
+            conn.execute("UPDATE checkpoints SET status=?, decided=?, reason=? WHERE id=? AND status='pending'",
+                         ("approved" if approved else "denied", self.now(), reason, cid))
+        return self.checkpoint_row(cid)
+
+    def continue_action(self, person: str, cid: str) -> dict:
+        """Send a checkpointed action, once, only if this person approved it with a fresh World ID check."""
+        r = self.checkpoint_row(cid)
+        if not r or r["person"] != person:
+            raise LoreError("no such approval for you")
+        if r["status"] == "pending":
+            return {"status": "waiting_for_approval", "approve_url": f"{self.approve_base}/checkpoint/{cid}"}
+        if r["status"] == "approved" and self.now() - r["decided"] > self.APPROVAL_TTL:
+            with self.tx() as conn:
+                conn.execute("UPDATE checkpoints SET status='expired', reason=? WHERE id=? AND status='approved'",
+                             ("approval not used in time", cid))
+            r = self.checkpoint_row(cid)
+        if r["status"] != "approved":
+            raise LoreError(f"blocked: this action was {r['status']} ({r['reason']}); nothing was signed or sent")
+        with self.tx() as conn:  # single use: claim it before sending
+            if not conn.execute("UPDATE checkpoints SET status='used' WHERE id=? AND status='approved' RETURNING id",
+                                (cid,)).fetchone():
+                raise LoreError("this approval was already used")
+        out = self.send(json.loads(r["prepared"]))
+        with self.tx() as conn:
+            conn.execute("UPDATE checkpoints SET tx_hashes=? WHERE id=?", (json.dumps(out.get("tx_hashes")), cid))
+        return {"status": "sent", "action": r["action"], **out}
+
+    def recent_checkpoints(self, limit: int = 20) -> list[dict]:
+        with self.tx() as conn:
+            rows = conn.execute("SELECT id, action, status, created, decided, reason FROM checkpoints"
+                                " ORDER BY created DESC LIMIT ?", (limit,)).fetchall()
+        out = []
+        for r in rows:
+            r = dict(r)
+            if r["status"] == "pending" and self.now() - r["created"] > self.CHECKPOINT_TTL:
+                r["status"], r["reason"] = "expired", "not approved in time"
+            out.append({"checkpoint": r["id"][:6], "action": r["action"], "status": r["status"],
+                        "created": r["created"], "decided": r["decided"], "reason": r["reason"]})
+        return out
+
     def send(self, prepared: dict) -> dict:
-        """Sign and broadcast a prepare_* result's transactions, in order. Returns it with their hashes."""
+        """Sign and broadcast a prepare_* result's transactions, in order. Returns it with their hashes.
+
+        For a self-held wallet (no Turnkey sub-org) nothing is signed here: the unsigned transactions go back for the
+        person's agent to sign and send locally, in order."""
+        if self.self_signed(prepared):
+            return {**prepared, "sign_locally": True,
+                    "next": "Sign and send these transactions in order with your wallet; Lore can't sign for it."}
         if self.signer is None:
             raise LoreError("transaction signing isn't configured on this gateway")
         out = dict(prepared)
@@ -161,11 +280,10 @@ class Service:
 
     # --- public catalogue ---
     def topics(self) -> list[dict]:
-        price = self.chain.topic_price()  # settable on-chain by ADMIN
         with self.tx() as conn:
             rows = conn.execute("SELECT t.id, t.meta_json, COUNT(n.id) AS n FROM topics t"
                                 " LEFT JOIN nodes n ON n.topic_id=t.id GROUP BY t.id ORDER BY t.id").fetchall()
-        return [{"topic_id": r["id"], "meta": meta(r["meta_json"]), "node_count": r["n"], "price": price} for r in rows]
+        return [{"topic_id": r["id"], "meta": meta(r["meta_json"]), "node_count": r["n"], "price": self.chain.topic_price(r["id"])} for r in rows]
 
     def topic(self, tid: int) -> dict:
         with self.tx() as conn:
@@ -173,7 +291,7 @@ class Service:
             if not t:
                 raise LoreError("no such topic")
             nodes = conn.execute("SELECT id, contributor, meta_json FROM nodes WHERE topic_id=? ORDER BY id", (tid,)).fetchall()
-            return {"topic_id": tid, "meta": meta(t["meta_json"]), "price": self.chain.topic_price(), "nodes": [{
+            return {"topic_id": tid, "meta": meta(t["meta_json"]), "price": self.chain.topic_price(tid), "nodes": [{
                 "node_id": n["id"], "contributor": n["contributor"], "meta": meta(n["meta_json"]),
                 "parents": [e[0] for e in conn.execute("SELECT parent FROM edges WHERE child=?", (n["id"],))],
             } for n in nodes]}
@@ -243,6 +361,8 @@ class Service:
             raise LoreError(str(e)) from e
         with self.tx() as conn:
             w = self._wallet(conn, person, wallet)
+            if self.chain.is_banned(w):
+                raise LoreError(BANNED)
             if self.chain.latest() - synced_block(conn) > MAX_LAG:
                 raise LoreError("Lore is catching up with the chain; try again in a few seconds")
             if self._vote_tasks(conn, person):  # vote-before-submit, per person
@@ -269,7 +389,9 @@ class Service:
     def prepare_buy(self, person: str, tid: int, wallet: str | None = None) -> dict:
         with self.tx() as conn:
             w = self._wallet(conn, person, wallet)
-        price = self.chain.topic_price()
+        if self.chain.is_banned(w):
+            raise LoreError(BANNED)
+        price = self.chain.topic_price(tid)  # nodeValue x nodes, live: approve exactly what buy() pulls
         return {"price": price, "transactions": [
             self.chain.prepare("USDC", "approve", w, self.chain.address("Access"), price),
             self.chain.prepare("Access", "buy", w, tid),
@@ -397,6 +519,7 @@ class Service:
         out_topics = [{"topic_id": t["id"], "title": m(t["meta_json"]).get("title"),
                        "description": m(t["meta_json"]).get("description"),
                        "node_count": sum(1 for n in nodes if n["topic_id"] == t["id"]), "buyers": bought.get(t["id"], 0),
+                       "price": params["node_value"] * sum(1 for n in nodes if n["topic_id"] == t["id"]),
                        "contributors": len(people_by_topic.get(t["id"], ())),
                        "proof": self.proof_summary(m(t["meta_json"]).get("receipt"))} for t in topics]
         out_nodes = [{"node_id": n["id"], "topic_id": n["topic_id"], "contributor": n["contributor"],
@@ -412,7 +535,8 @@ class Service:
         out_reports = [{"report_id": r["id"], "topic_id": r["topic_id"], "matched": r["matched_wallet"] is not None,
                         "matched_wallet": r["matched_wallet"], "score_bps": r["score_bps"]} for r in reports]
         purchases = sum(bought.values())
-        volume = purchases * params["topic_price"]
+        with self.tx() as conn:
+            volume = conn.execute("SELECT COALESCE(SUM(amount), 0) FROM sales").fetchone()[0]
         return {
             "generated_at": self.now(), "chain": chain_info, "params": params, "mcp_url": mcp_url,
             "stats": {"topics": len(topics), "nodes": len(nodes), "submissions": len(subs),
@@ -423,6 +547,7 @@ class Service:
                       "royalties_usdc": volume - volume * params["platform_cut_bps"] // 10_000,
                       "leak_reports": len(reports), "leaks_traced": sum(1 for r in reports if r["matched_wallet"])},
             "topics": out_topics, "nodes": out_nodes, "submissions": out_subs, "reports": out_reports,
+            "checkpoints": self.recent_checkpoints(),
         }
 
     # --- inbox ---

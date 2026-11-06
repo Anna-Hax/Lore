@@ -113,8 +113,7 @@ class Turnkey:
 
         Retry-safe for RETRY_WINDOW_MS after `ms`: every step's timestampMs is derived from `ms`, so calling again
         with the same arguments returns the activities that already ran and finishes the rest. Never duplicates."""
-        # ponytail: activity versions and result field names per Turnkey's docs (V7 sub-org, V3 policy);
-        # confirm against the live API in spike T1.
+        # Activity versions, result fields and the policy syntax were confirmed against the live API (spike T1).
         result = self._activity(self.parent, "/public/v1/submit/create_sub_organization",
                                 "ACTIVITY_TYPE_CREATE_SUB_ORGANIZATION_V7", self.org, ms=ms, parameters={
             "subOrganizationName": f"lore-{person[2:18]}",

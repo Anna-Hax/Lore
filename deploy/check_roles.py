@@ -15,7 +15,9 @@ def check(reader, addresses: dict) -> dict:
         name: all(reader.call("LoreRoles", "hasRole", reader.call("LoreRoles", role), addresses[name]) for role in needed)
         for name, needed in ROLES.items()
     }
-    funded = {name: reader.web3.eth.get_balance(address) > 0 for name, address in addresses.items()}
+    # addresses.json also holds the Turnkey delegated public key, which is not a wallet.
+    funded = {name: reader.web3.eth.get_balance(address) > 0 for name, address in addresses.items()
+              if name != "turnkey_delegated_public_key"}
     return {"roles": roles, "funded": funded, "ready": all(roles.values()) and all(funded.values())}
 
 

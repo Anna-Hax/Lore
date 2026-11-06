@@ -27,6 +27,33 @@ from gateway.turnkey import Turnkey
 from zg.providers import Providers
 from gateway.db import bind_deployment, connect
 from gateway.worldid import WorldID
+from gateway.worldidp import WorldIdP, parse_acr
+
+
+def self_signed(folder: Path) -> tuple[str, str]:
+    """A localhost certificate for the local HTTPS listener, made once and reused."""
+    cert, key = folder / "localhost.pem", folder / "localhost-key.pem"
+    if not cert.exists():
+        import datetime
+
+        from cryptography import x509
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import ec
+        from cryptography.x509.oid import NameOID
+
+        folder.mkdir(parents=True, exist_ok=True)
+        k = ec.generate_private_key(ec.SECP256R1())
+        name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "localhost")])
+        now = datetime.datetime.now(datetime.UTC)
+        c = (x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(k.public_key())
+             .serial_number(x509.random_serial_number()).not_valid_before(now - datetime.timedelta(minutes=5))
+             .not_valid_after(now + datetime.timedelta(days=30))
+             .add_extension(x509.SubjectAlternativeName([x509.DNSName("localhost")]), critical=False)
+             .sign(k, hashes.SHA256()))
+        key.write_bytes(k.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+                                        serialization.NoEncryption()))
+        cert.write_bytes(c.public_bytes(serialization.Encoding.PEM))
+    return str(cert), str(key)
 
 
 def main():
@@ -57,11 +84,35 @@ def main():
     e = os.environ
     turnkey = Turnkey(e["TURNKEY_ORGANIZATION_ID"], (e["TURNKEY_API_PUBLIC_KEY"], e["TURNKEY_API_PRIVATE_KEY"]),
                       (e["TURNKEY_DELEGATED_PUBLIC_KEY"], e["TURNKEY_DELEGATED_PRIVATE_KEY"]))
+    idp = None
+    tls_port = int(e.get("LORE_TLS_PORT", 0) or 0)
+    approve_base = e.get("LORE_APPROVE_URL") or (f"https://localhost:{tls_port}" if tls_port else e["LORE_PUBLIC_URL"])
+    if e.get("WORLD_IDP_CLIENT_ID"):  # World ID Agent Pass: login + human checkpoints
+        idp = WorldIdP(e.get("WORLD_IDP_ISSUER", "https://auth.world.org"), e["WORLD_IDP_CLIENT_ID"],
+                       e["WORLD_IDP_CLIENT_SECRET"], approve_base.rstrip("/") + "/login/callback",
+                       accept_acr=parse_acr(e.get("WORLD_IDP_ACR")))
     app = create_app(db_path, chain, content, storage, world=world, service_token=e["LORE_SERVICE_TOKEN"],
                      public_url=e["LORE_PUBLIC_URL"], provider_signer=lambda p: providers(p)[1], turnkey=turnkey,
                      demo_login=e.get("LORE_DEMO_LOGIN") == "1", site_dir=site_dir, chain_info=chain_info,
-                     warm_overview=True)
-    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("LORE_PORT", 8080)))
+                     warm_overview=True, idp=idp, approve_base=approve_base)
+    port = int(os.environ.get("LORE_PORT", 8080))
+    if not tls_port:
+        uvicorn.run(app, host="0.0.0.0", port=port)
+        return
+    # Also serve HTTPS (World IdP only redirects to https callbacks). One app, two listeners; lifespan runs once.
+    import asyncio
+
+    plain = uvicorn.Server(uvicorn.Config(app, host="0.0.0.0", port=port))
+    cert, key = e.get("LORE_TLS_CERT"), e.get("LORE_TLS_KEY")
+    if not cert:  # local demo: a self-signed certificate for localhost (the browser warns once)
+        cert, key = self_signed(Path(db_path).resolve().parent / "tls")
+    tls = uvicorn.Server(uvicorn.Config(app, host="0.0.0.0", port=tls_port, lifespan="off",
+                                        ssl_certfile=cert, ssl_keyfile=key))
+
+    async def both():
+        await asyncio.gather(plain.serve(), tls.serve())
+
+    asyncio.run(both())
 
 
 if __name__ == "__main__":

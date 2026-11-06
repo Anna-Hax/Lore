@@ -1,5 +1,17 @@
 # Dynamic pricing: P3 implementation and integration handoff
 
+> **Team decisions (2026-11-07) — this dynamic model is NOT adopted.** Lore uses:
+> - **Price:** a fixed node value, `NODE_VALUE = 1 USDC` (≈ the model tokens a buyer saves); a topic costs
+>   `nodeValue × nodeCount` (`Access.priceOf`). No demand curve, no `maxPrice`, no founder-set `p0`.
+> - **Submitting:** 10 USDC stake; accepted stakes come back minus a **0.5 USDC fee** (covers verification costs).
+> - **Voters are never paid;** a rejected stake goes entirely to the treasury.
+> - **Royalties:** the earlier equal split across a topic's nodes, 10% platform cut (each node earns 0.9 × node value per sale).
+> - **Leaks:** a deterministically proven watermark match removes the leaker from Lore completely
+>   (`PersonRegistry.ban`, person-wide); no voting. The exact proof rule is still to be decided.
+> - **Dropped:** payee recovery, "buy before contributing", quality-weighted royalties, voter rewards.
+>
+> The library and tests below remain as a reference only.
+
 Based on the supplied `context.md`, after fetching and merging `origin/main`
 at `698649b`. The user selected the attachment's voter rewards, replacing main's
 treasury-only slash policy **for this new model**. Edits stay within P3's paths.

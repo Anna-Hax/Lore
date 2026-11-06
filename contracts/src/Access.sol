@@ -19,11 +19,14 @@ contract Access is IAccess, ERC1155, LoreBase {
     IERC20 public immutable usdc;
     TopicGraph public immutable graph;
     Royalties public immutable royalties;
-    uint256 public topicPrice = Constants.TOPIC_PRICE;
+    /// @notice What one node is worth, in USDC (6 decimals): roughly the model tokens a buyer saves by not redoing
+    ///         that research. A topic costs nodeValue x its accepted nodes, so each node earns the same per sale.
+    uint256 public nodeValue = Constants.NODE_VALUE;
 
-    event TopicPriceSet(uint256 price);
+    event NodeValueSet(uint256 value);
 
     error Soulbound();
+    error Banned(address wallet);
     error AlreadyHeld(uint256 topicId);
     error UnknownTopic(uint256 topicId);
 
@@ -39,9 +42,14 @@ contract Access is IAccess, ERC1155, LoreBase {
         royalties = royalties_;
     }
 
-    function setTopicPrice(uint256 price) external onlyAdmin {
-        topicPrice = price;
-        emit TopicPriceSet(price);
+    function setNodeValue(uint256 value) external onlyAdmin {
+        nodeValue = value;
+        emit NodeValueSet(value);
+    }
+
+    /// @inheritdoc IAccess
+    function priceOf(uint256 topicId) public view returns (uint256) {
+        return nodeValue * graph.nodeCount(topicId);
     }
 
     function setURI(string calldata newuri) external onlyAdmin {
@@ -52,8 +60,9 @@ contract Access is IAccess, ERC1155, LoreBase {
     function buy(uint256 topicId) external {
         if (!graph.topicExists(topicId)) revert UnknownTopic(topicId);
         if (balanceOf(msg.sender, topicId) != 0) revert AlreadyHeld(topicId);
+        if (graph.registry().isBanned(msg.sender)) revert Banned(msg.sender);
 
-        uint256 price = topicPrice;
+        uint256 price = priceOf(topicId);
         usdc.safeTransferFrom(msg.sender, address(royalties), price);
         royalties.distribute(topicId, price);
 
@@ -64,7 +73,7 @@ contract Access is IAccess, ERC1155, LoreBase {
 
     /// @inheritdoc IAccess
     function hasAccess(uint256 topicId, address a) external view returns (bool) {
-        return balanceOf(a, topicId) != 0;
+        return balanceOf(a, topicId) != 0 && !graph.registry().isBanned(a);
     }
 
     // ---------- soulbound ----------
