@@ -41,8 +41,14 @@ key: 125 models. Filter on `verifiability == "TeeML"`.
 - Embeddings: use `qwen3-embedding-8b`. `qwen3-embedding-0.6b` is listed by the Router
   but has no mainnet service record. `qwen3.7-text-embedding` is TeeTLS on the Router,
   though its on-chain record says TeeML, so don't use it.
-- So a TeeML embedding model exists and `fastembed` should not be needed. Quality on
-  verifier and curator fixtures is untested.
+- So a TeeML embedding model exists and `fastembed` should not be needed.
+
+**Decision (2026-11-06): `ZG_MODEL=glm-5.3`, `ZG_EMBED_MODEL=qwen3-embedding-8b`.** Both are TeeML on the
+Router and served by mainnet providers whose TEE signers match their on-chain records. `glm-5.3` ran the
+verifier and curator through the full end-to-end run on Galileo: it caught the near-copy, wrote all titles and
+descriptions within limits (with the curator's length-feedback retry), and its proofs pass. It reasons before
+answering, so give it a generous `max_tokens` (or none) and a long read timeout (`zg` uses 300 s).
+`deploy/run_local.py` defaults to `glm-5.3`; set `ZG_MODEL` the same way for `deploy/compose.yaml`.
 
 ## Status by question
 
