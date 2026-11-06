@@ -36,7 +36,7 @@ Work only inside the paths your person owns (`BUILD_PLAN.md` section 0). Changin
 
 - **Never return plaintext content** from any endpoint unless the on-chain access, vote-eligibility or role check has passed. Every endpoint that returns content has a test proving the check is there.
 - **Every model call goes through `agents/zg`,** in private mode with `verify_tee: true`, and its receipt is verified and stored. Never fall back to a lower trust tier, and never send submission or node text outside 0G private mode.
-- **Secrets** (`MASTER_KEY`, `WM_SECRET`, wallet keys, API keys) live only in the host's secret store or a local `.env`. Never commit them, print them or log them. How users' transactions get signed (a password manager) is still being designed: don't build signing until it is.
+- **Secrets** (`MASTER_KEY`, `WM_SECRET`, wallet keys, API keys) live only in the host's secret store or a local `.env`. Never commit them, print them or log them. Users' transactions are signed by Turnkey under delegated-access policies (`agents/gateway/turnkey.py`); never widen those policies without the team agreeing.
 - **Don't invent network values.** RPC URLs, chain IDs and storage endpoints come from the official 0G docs and go in `shared/lore_shared/network.py`.
 - **Keep it lean.** Don't add a framework, abstraction, dependency or service that the plan doesn't call for. If something seems missing, ask instead of building it.
 - **Leave one runnable check behind** for any non-trivial logic: a Foundry test for contracts, and a `pytest` test for Python.

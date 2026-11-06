@@ -1160,6 +1160,7 @@ dependencies = [
     { name = "lore-shared" },
     { name = "mcp" },
     { name = "requests" },
+    { name = "turnkey-api-key-stamper" },
     { name = "uvicorn" },
     { name = "web3" },
 ]
@@ -1178,6 +1179,7 @@ requires-dist = [
     { name = "lore-shared", editable = "../shared" },
     { name = "mcp", specifier = ">=2.3,<3" },
     { name = "requests", specifier = ">=2.31" },
+    { name = "turnkey-api-key-stamper", specifier = ">=0.1.1" },
     { name = "uvicorn", specifier = ">=0.30" },
     { name = "web3", specifier = ">=7,<8" },
 ]
@@ -2089,6 +2091,18 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/ee/9f/c5201d42a484c061e528825fc8e2d565f5abd50a4ced6fb7d29c4ec99b2b/truststore-0.10.5.tar.gz", hash = "sha256:30d36967ccaded5cbb38d602c433f53600036c79d502f4533a49b60a03bbefcd", size = 28091, upload-time = "2026-10-12T22:27:31.808Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/51/e9/3a7820be2bb0fe53b6bc9c3be26d3d1158004e4c3ab953aa6840b955b1e9/truststore-0.10.5-py3-none-any.whl", hash = "sha256:9aaaedaefaf06d8b206278cf8b5012bc897f485a874503501e12d776df78951c", size = 19017, upload-time = "2026-10-12T22:27:30.377Z" },
+]
+
+[[package]]
+name = "turnkey-api-key-stamper"
+version = "0.1.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cryptography" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/4a/1e/f647457af431ad87d35a2941f4b2263d839bc06157f65aa87050e9e56f6c/turnkey_api_key_stamper-0.1.1.tar.gz", hash = "sha256:617d980eae8d1a04fae2f4e2f2edd468494482d7717b05e6484dcc19b6c4284d", size = 6964, upload-time = "2026-10-21T18:14:33.159Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/04/94/16a24dde870319bcdee59a012b0570328de48939a0fd4760667512d01983/turnkey_api_key_stamper-0.1.1-py3-none-any.whl", hash = "sha256:93044aa025b00f137121f9513f65fed0075a12f9eeef5a63e80d0f5c7ba3e3cb", size = 7463, upload-time = "2026-10-21T18:14:29.671Z" },
 ]
 
 [[package]]

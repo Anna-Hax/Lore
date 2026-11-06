@@ -1,13 +1,15 @@
 """Everything a Lore user can do, as a World ID person. The hosted MCP tools call these.
 
 A user is a person (their World ID nullifier). On-chain they act through wallets linked to that person in
-PersonRegistry; one person can have several. Signing is not done here yet: transaction tools return
-unsigned transactions (prepare_*), and wallet signing (a password manager) comes in the next step.
+PersonRegistry. Lore creates each person a Turnkey wallet with delegated access (gateway/turnkey.py): Lore can
+sign only Lore's own calls from it (but any of them, so users keep only what they mean to spend on Lore). prepare_* builds the calls; send() signs and broadcasts them.
 
 Plaintext only leaves after a live on-chain check: access (buyers) or vote eligibility (voters).
 """
 
 import json
+import re
+import threading
 import time
 from contextlib import closing, contextmanager
 
@@ -17,13 +19,13 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 from gateway import proof, tasks
 from gateway.db import connect, synced_block
+from gateway.turnkey import RETRY_WINDOW_MS, lore_policies
 
 INGEST_TTL = 600  # an ingest must be submitted on-chain within 10 min, so it can't skip votes assigned later
 MAX_LAG = 60      # blocks (~30 s on 0G): refuse ingests while the indexer is behind, or the vote gate is blind
-NO_WALLET = ("No wallet is linked to you yet. Call lore_link_wallet with your agent's wallet address, sign the message "
-             "it returns with that wallet (EIP-191 personal_sign, locally: keys never leave your machine), then call "
-             "lore_link_wallet again with the signature.")
-LINK_MESSAGE = "Link wallet {wallet} to Lore person {person} on chain {chain_id}."
+NO_WALLET = "You don't have a wallet yet: create one with lore_create_wallet, then fund it with 0G (gas) and USDC."
+POLICY_CALLS = {"USDC": ["approve"], "Submissions": ["submit", "vote"], "Access": ["buy"], "Royalties": ["claim"],
+                "Reports": ["report"]}  # everything Lore may sign from a user's wallet
 
 
 class LoreError(ToolError):
@@ -35,10 +37,17 @@ def meta(raw):
 
 
 class Service:
-    def __init__(self, db_path: str, chain, content, storage, now=lambda: int(time.time()), provider_signer=None):
-        """content/storage: P3's lore_shared (crypto + watermark, storage). provider_signer(provider) -> address."""
+    def __init__(self, db_path: str, chain, content, storage, now=lambda: int(time.time()), provider_signer=None,
+                 turnkey=None, signer=None):
+        """content/storage: P3's lore_shared (crypto + watermark, storage). provider_signer(provider) -> address.
+        turnkey: gateway.turnkey.Turnkey (creates wallets); signer: gateway.signer.Signer (sends from them)."""
         self.db_path, self.chain, self.content, self.storage, self.now = db_path, chain, content, storage, now
-        self.provider_signer = provider_signer
+        self.provider_signer, self.turnkey, self.signer = provider_signer, turnkey, signer
+        self._locks, self._guard = {}, threading.Lock()
+
+    def _person_lock(self, person: str) -> threading.Lock:
+        with self._guard:
+            return self._locks.setdefault(person, threading.Lock())
 
     @contextmanager
     def tx(self):
@@ -67,34 +76,75 @@ class Service:
         with self.tx() as conn:
             return {"person": person, "wallets": self.wallets(conn, person)}
 
-    def link_message(self, person: str, wallet: str) -> str:
-        from web3 import Web3
+    # --- wallets (Turnkey, delegated access) ---
+    def managed_sub_org(self, address: str) -> str | None:
+        """The Turnkey sub-org of a wallet Lore manages, or None."""
+        with self.tx() as conn:
+            row = conn.execute("SELECT sub_org FROM turnkey_wallets WHERE address=? AND ready",
+                               (address.lower(),)).fetchone()
+        return row[0] if row else None
 
-        return LINK_MESSAGE.format(wallet=Web3.to_checksum_address(wallet), person=person.lower(),
-                                   chain_id=self.chain.chain_id or self.chain.w3.eth.chain_id)
+    def create_wallet(self, person: str, email: str) -> dict:
+        """Create this person's Turnkey wallet (they are its only root, reachable by `email`; Lore may sign only
+        Lore's calls) and link it to their person on-chain. Safe to call again: it finishes what's missing.
 
-    def link_wallet(self, person: str, wallet: str, signature: str) -> dict:
-        """Link a wallet the caller proves they hold to their person, on-chain (PersonRegistry; we are REGISTRAR).
+        The attempt (email, start time) is saved before Turnkey is called, and a retry replays the same requests
+        (gateway/turnkey.py: same body, same activity), so a crash midway never leaves a second wallet."""
+        if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email or ""):
+            raise LoreError("give the email you'll use to manage (and if needed, revoke) the wallet")
+        if self.turnkey is None:
+            raise LoreError("wallets aren't configured on this gateway")
+        with self._person_lock(person):  # one creation per person at a time; other people aren't held up
+            with self.tx() as conn:
+                row = conn.execute("SELECT email, created_ms, address, ready FROM turnkey_wallets WHERE person=?",
+                                   (person,)).fetchone()
+                if row is None:
+                    row = (email, self.now() * 1000, None, 0)
+                    conn.execute("INSERT INTO turnkey_wallets (person, email, created_ms) VALUES (?, ?, ?)",
+                                 (person, *row[:2]))
+            email, ms, address, ready = row  # a retry reuses the first attempt's email, so it replays exactly
+            if not ready:
+                # ponytail: past Turnkey's 1 h replay window an unfinished setup needs a person (its requests
+                # can't be replayed). Resume from get_activity / list policies if that ever happens in practice.
+                if self.now() * 1000 - ms > RETRY_WINDOW_MS:
+                    raise LoreError("your wallet setup started over an hour ago and didn't finish; ask Lore's team"
+                                    " to complete it")
+                contracts = {n: self.chain.address(n) for n in POLICY_CALLS}
+                selectors = {f"{c}.{fn}": self.chain.selector(c, fn) for c, fns in POLICY_CALLS.items() for fn in fns}
+                try:
+                    sub, address = self.turnkey.create_wallet(
+                        person, email, lambda uid: lore_policies(uid, self.chain.chain_id, contracts, selectors), ms)
+                except Exception as e:
+                    raise LoreError(f"creating your wallet didn't finish ({e}); call lore_create_wallet again") from e
+                address = address.lower()
+                with self.tx() as conn:
+                    conn.execute("UPDATE turnkey_wallets SET address=?, sub_org=?, ready=1 WHERE person=?",
+                                 (address, sub, person))
+            if not self.chain.person_of(address):  # link it on-chain (the gateway holds REGISTRAR)
+                try:
+                    self.chain.send("PersonRegistry", "register", self.chain.w3.to_checksum_address(address),
+                                    bytes.fromhex(person[2:]))
+                except Exception as e:
+                    if (self.chain.person_of(address) or "").lower() != person.lower():  # not a lost race: real failure
+                        raise LoreError(f"linking your wallet to your World ID failed ({e}); call lore_create_wallet"
+                                        " again") from e
+        return {"address": address, "next": "fund it with 0G (gas) and USDC, then you can buy, submit and vote. Lore"
+                " can spend this wallet on Lore actions, so keep only what you mean to spend here"}
 
-        The signature is over link_message(person, wallet), so it can only ever link that wallet to that person.
-        """
-        from eth_account import Account
-        from eth_account.messages import encode_defunct
+    def wallet_info(self, person: str) -> dict:
+        with self.tx() as conn:
+            mine = self.wallets(conn, person)
+            managed = {r[0] for r in conn.execute("SELECT address FROM turnkey_wallets WHERE person=? AND ready",
+                                                  (person,))}
+        return {"wallets": [{"address": w, "lore_can_sign": w in managed, **self.chain.balances(w)} for w in mine]}
 
-        try:
-            signer = Account.recover_message(encode_defunct(text=self.link_message(person, wallet)), signature=signature)
-        except Exception as e:
-            raise LoreError(f"unreadable signature: {e}") from e
-        if signer.lower() != wallet.lower():
-            raise LoreError("that signature is not from this wallet; sign the exact message lore_link_wallet returned")
-        current = self.chain.person_of(wallet)
-        if current and current.lower() != person.lower():
-            raise LoreError("that wallet is already linked to another person")
-        if not current:
-            self.chain.send("PersonRegistry", "register", self.chain._a(wallet), bytes.fromhex(person.removeprefix("0x")))
-        with self.tx() as conn:  # the indexer records it too; this makes it usable right away
-            conn.execute("INSERT OR IGNORE INTO persons VALUES (?, ?)", (wallet.lower(), person.lower()))
-        return self.whoami(person)
+    def send(self, prepared: dict) -> dict:
+        """Sign and broadcast a prepare_* result's transactions, in order. Returns it with their hashes."""
+        if self.signer is None:
+            raise LoreError("transaction signing isn't configured on this gateway")
+        out = dict(prepared)
+        out["tx_hashes"] = self.signer.send_all(out.pop("transactions"))
+        return out
 
     def gated(self, conn, s) -> bool:
         """True iff this on-chain submission is the content its own submitter ingested through us, recently.

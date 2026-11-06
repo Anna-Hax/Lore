@@ -28,12 +28,15 @@ CREATE TABLE IF NOT EXISTS oauth_pending (id TEXT PRIMARY KEY, client_id TEXT, p
 CREATE TABLE IF NOT EXISTS oauth_codes   (code TEXT PRIMARY KEY, data TEXT);
 CREATE TABLE IF NOT EXISTS oauth_tokens  (token TEXT PRIMARY KEY, kind TEXT, client_id TEXT, person TEXT, scopes TEXT,
                                           expires INT, resource TEXT);
+-- Wallets Lore created on Turnkey with delegated access (gateway/turnkey.py).
+CREATE TABLE IF NOT EXISTS turnkey_wallets (person TEXT PRIMARY KEY, email TEXT, created_ms INT,  -- one wallet a person
+                                            address TEXT UNIQUE, sub_org TEXT, ready INT NOT NULL DEFAULT 0);
 -- What each person has already been told about (lore_inbox).
 CREATE TABLE IF NOT EXISTS inbox_state   (person TEXT PRIMARY KEY, since_node INT, subs TEXT);
 """
 
 
-SCHEMA_VERSION = 5  # bump whenever a table changes shape
+SCHEMA_VERSION = 7  # bump whenever a table changes shape
 
 
 def bind_deployment(db, deployment: str) -> None:

@@ -1,41 +1,12 @@
-"""Wallet linking, the labelled demo login, and the public explorer API."""
+"""The labelled demo login and the public explorer API."""
 
 import json
 
-import pytest
-from eth_account import Account
-from eth_account.messages import encode_defunct
 from fastapi.testclient import TestClient
 
 from gateway.app import create_app, demo_person
-from gateway.service import LoreError
 from tests.fakes import FakeChain, FakeContent, FakeStorage
 from tests.test_gateway import env, person, submit, seed, ALICE, BOB  # noqa: F401  (fixture + helpers)
-
-DAVE = Account.create()
-
-
-def sign(acct, text):
-    return acct.sign_message(encode_defunct(text=text)).signature.to_0x_hex()
-
-
-def test_link_wallet_needs_a_signature_from_that_wallet_over_that_person(env):
-    me = person(DAVE)
-    msg = env.svc.link_message(me, DAVE.address)
-    assert DAVE.address in msg and me in msg and "16602" in msg
-    with pytest.raises(LoreError, match="not from this wallet"):
-        env.svc.link_wallet(me, DAVE.address, sign(ALICE, msg))
-    with pytest.raises(LoreError, match="not from this wallet"):  # a signature for another person can't be reused
-        env.svc.link_wallet(me, DAVE.address, sign(DAVE, env.svc.link_message(person(ALICE), DAVE.address)))
-    out = env.svc.link_wallet(me, DAVE.address, sign(DAVE, msg))
-    assert out["wallets"] == [DAVE.address.lower()]
-    assert env.chain.sent[-1][:2] == ("PersonRegistry", "register")
-
-
-def test_link_wallet_refuses_a_wallet_owned_by_someone_else(env):
-    env.chain.persons[DAVE.address.lower()] = person(ALICE)
-    with pytest.raises(LoreError, match="another person"):
-        env.svc.link_wallet(person(DAVE), DAVE.address, sign(DAVE, env.svc.link_message(person(DAVE), DAVE.address)))
 
 
 def test_demo_login_is_off_unless_asked_for_and_never_with_world_id(tmp_path):

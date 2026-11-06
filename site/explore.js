@@ -611,7 +611,8 @@
     ['lore_claim', 'Claim royalties'],
     ['lore_report_leak', 'Report leaked text for tracing'],
     ['lore_check_proof', 'Verify a TEE proof receipt'],
-    ['lore_link_wallet', 'Link your agent’s wallet to you (signed locally)'],
+    ['lore_create_wallet', 'Create your Lore wallet (Turnkey; you own it, Lore signs only Lore calls)'],
+    ['lore_wallet', 'Your wallet address and balances'],
     ['lore_whoami', 'Your person and linked wallets'],
   ];
   function renderConnect() {
@@ -619,7 +620,7 @@
     if (!url && state.api) url = `${state.api}/mcp`;
     if (!url) url = '<gateway>/mcp';
     add(clear($('mcpBody')), [
-      h('p', { class: 'note' }, 'Use your own MCP-capable agent (Claude Code, Cursor and others). Lore hosts the MCP server; your agent does the reasoning and signing.'),
+      h('p', { class: 'note' }, 'Use your own MCP-capable agent (Claude Code, Cursor and others). Lore hosts the MCP server and signs Lore’s calls from your Turnkey wallet; your agent does the reasoning.'),
       h('h3', {}, 'MCP endpoint'), copyRow(url),
       h('h3', {}, 'Claude Code'), copyRow(`claude mcp add --transport http lore ${url}`),
       h('ul', { class: 'bullets' },

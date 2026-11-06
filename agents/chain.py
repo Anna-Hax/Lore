@@ -77,6 +77,17 @@ class Chain:
     def claimable(self, node_id: int) -> int:
         return self.c["Royalties"].functions.claimable(node_id).call()
 
+    def selector(self, contract: str, fn: str) -> str:
+        from eth_utils import function_abi_to_4byte_selector
+
+        entry = next(e for e in self.c[contract].abi if e.get("type") == "function" and e["name"] == fn)
+        return "0x" + function_abi_to_4byte_selector(entry).hex()
+
+    def balances(self, addr: str) -> dict:
+        """Native 0G (gas) and USDC, both in base units."""
+        a = self._a(addr)
+        return {"native_wei": self.w3.eth.get_balance(a), "usdc": self.c["USDC"].functions.balanceOf(a).call()}
+
     def address(self, contract: str) -> str:
         return self.c[contract].address
 

@@ -36,6 +36,10 @@ def test_generated_secrets_are_private_separate_and_accepted_by_launch(tmp_path)
     for service in ("verifier", "curator"):
         path = directory / f"{service}.env"
         path.write_text(path.read_text().replace("ZG_API_KEY=", "ZG_API_KEY=router-key"))
+    gateway = directory / "gateway.env"  # Turnkey issues the parent-org key; the operator adds it
+    with pytest.raises(ValueError):
+        launch.secret_environment("gateway", gateway.read_text())
+    gateway.write_text(gateway.read_text().replace("TURNKEY_API_PRIVATE_KEY=", "TURNKEY_API_PRIVATE_KEY=" + "7" * 64))
     storage = set()
     for service in launch.REQUIRED:
         text = (directory / f"{service}.env").read_text()

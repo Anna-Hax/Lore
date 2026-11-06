@@ -1,0 +1,14 @@
+# TLS in front of the gateway (the hosted MCP server and its World ID login).
+# Caddy gets the Let's Encrypt certificate itself (ports 80 and 443 must be open).
+# LORE_DOMAIN is set in the caddy service's environment (azure.sh); LORE_PUBLIC_URL must be https://$LORE_DOMAIN.
+#   sudo cp deploy/Caddyfile /etc/caddy/Caddyfile && sudo systemctl reload caddy
+
+{$LORE_DOMAIN} {
+	# The verifier and curator reach /internal/* over the compose network; it never needs to be public.
+	respond /internal/* 404
+
+	reverse_proxy 127.0.0.1:8080 {
+		# MCP streamable HTTP: pass server-sent events through as they are written.
+		flush_interval -1
+	}
+}
