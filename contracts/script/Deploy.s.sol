@@ -15,7 +15,7 @@ import {Reports} from "../src/Reports.sol";
 ///         shared/lore_shared/deployments/<chainId>.json.
 ///
 /// Env:
-///   DEPLOYER_PRIVATE_KEY   required (on anvil it defaults to anvil account #0)
+///   DEPLOYER_PRIVATE_KEY   required, except on anvil (31337), which always uses anvil account #0
 ///   TREASURY               default: deployer
 ///   VERIFIER, CURATOR      role wallets of the verifier and curator agents (default: deployer)
 ///   LEAK_DETECTOR          the gateway agent's wallet; it calls recordMatch (default: deployer)
@@ -38,7 +38,7 @@ contract Deploy is Script {
 
     function run() external returns (Deployed memory d) {
         uint256 pk = block.chainid == 31337
-            ? vm.envOr("DEPLOYER_PRIVATE_KEY", ANVIL_KEY_0)
+            ? ANVIL_KEY_0
             : vm.envUint("DEPLOYER_PRIVATE_KEY");
         address deployer = vm.addr(pk);
         address treasury = vm.envOr("TREASURY", deployer);
