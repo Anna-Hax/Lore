@@ -149,3 +149,49 @@ def json_out(output: str) -> dict:
     if text.startswith("```"):
         text = text.split("\n", 1)[1].rsplit("```", 1)[0]
     return json.loads(text)
+
+
+def embed(
+    text: str,
+    *,
+    model: str,
+    api_key: str,
+    provider_info: ProviderInfo,
+    http: httpx.Client | None = None,
+    retries: int = 5,
+    sleep: Callable[[float], None] = time.sleep,
+) -> list[float]:
+    """One private embedding from the Router, used only for similarity scores (never shown to users).
+
+    Same rules as call(): private mode, and the provider's TEE signature over the (end-to-end encrypted) exchange
+    must come from the signer in its on-chain Service record. The vector itself is not bound by that signature.
+    """
+    http = http or httpx.Client(timeout=120)
+    headers = {"Authorization": f"Bearer {api_key}", **PRIVATE_HEADERS}
+    body = {"model": model, "input": [text], "verify_tee": True}
+    for attempt in range(retries):
+        r = http.post(f"{ROUTER}/embeddings", json=body, headers=headers)
+        if r.status_code == 503 and "no_provider_for_trust_mode" in r.text:
+            sleep(2**attempt)
+            continue
+        r.raise_for_status()
+        break
+    else:
+        raise ZGUnavailable("no private (TeeML) embedding provider available")
+    data = r.json()
+    trace = data.get("x_0g_trace") or {}
+    if trace.get("tee_verified") is False:
+        raise ZGError("router did not verify the TEE signature (tee_verified=False)")
+    vector = data["data"][0]["embedding"]
+    chat_id = r.headers.get("ZG-Res-Key") or data.get("id")
+    try:
+        url, tee_signer = provider_info(trace["provider"])
+        sig = http.get(f"{url}/v1/proxy/signature/{chat_id}", params={"model": model})
+        sig.raise_for_status()
+        sig = sig.json()
+        check_signature(sig["text"], sig["signature"], tee_signer, json.dumps(vector))
+    except ZGError:
+        raise
+    except Exception as e:
+        raise ZGError(f"could not verify a paid embedding: {e!r}") from e
+    return vector

@@ -16,10 +16,20 @@ from gwclient import Gateway
 from zg.providers import Providers
 
 
-def embed(text: str) -> list[float]:
-    # ponytail: spike S4 picked qwen3-embedding-8b (TeeML on the router). Calling it privately and verified
-    # needs a Router key to confirm the embeddings response and signature shape (spike S1).
-    raise NotImplementedError("embeddings pending spike S1 (model: qwen3-embedding-8b)")
+def embed_with(api_key: str, provider_info, model: str | None = None):
+    """Private, signature-checked embeddings on the 0G Router (spike S4: qwen3-embedding-8b, TeeML).
+
+    Cached by exact text for the life of the process: the verifier re-embeds the same topic nodes for every submission.
+    """
+    model = model or os.environ.get("ZG_EMBED_MODEL", "qwen3-embedding-8b")
+    cache: dict[str, list[float]] = {}
+
+    def embed(text: str) -> list[float]:
+        if text not in cache:
+            cache[text] = zg.embed(text, model=model, api_key=api_key, provider_info=provider_info)
+        return cache[text]
+
+    return embed
 
 
 def upload_json(obj: dict) -> str:
@@ -40,6 +50,7 @@ def build(key_env: str, jobs) -> dict:
         "llm": lambda messages, version: zg.call(
             model, messages, prompt_version=version, api_key=api_key, provider_info=provider_info, cache=jobs.paid
         ),
+        "embed": embed_with(api_key, provider_info),
         "jobs": jobs,
         "upload_json": upload_json,
         "start_block": dep["deployBlock"],

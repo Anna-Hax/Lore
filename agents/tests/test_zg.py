@@ -126,3 +126,22 @@ def test_e2ee_signature_is_accepted_and_recorded_as_ciphertext_binding():
 def test_e2ee_signature_from_wrong_key_is_still_rejected():
     with pytest.raises(zg.ZGError, match="not the provider's TEE signer"):
         run(fake_network(signed_text=E2EE_TEXT, signer=IMPOSTOR))
+
+
+def fake_embed_network(*, signer=TEE, signed_text=E2EE_TEXT):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/embeddings"):
+            assert request.headers["X-0G-Provider-Trust-Mode"] == "private"
+            return httpx.Response(200, headers={"ZG-Res-Key": "emb-1"},
+                                  json={"data": [{"embedding": [0.1, 0.2]}], "x_0g_trace": {"provider": "0xProvider"}})
+        sig = signer.sign_message(encode_defunct(text=signed_text)).signature.to_0x_hex()
+        return httpx.Response(200, json={"text": signed_text, "signature": sig})
+    return httpx.Client(transport=httpx.MockTransport(handler))
+
+
+def test_embed_is_private_and_signature_checked():
+    vec = zg.embed("t", model="m", api_key="k", provider_info=lambda p: (PROVIDER_URL, TEE.address), http=fake_embed_network())
+    assert vec == [0.1, 0.2]
+    with pytest.raises(zg.ZGError, match="not the provider's TEE signer"):
+        zg.embed("t", model="m", api_key="k", provider_info=lambda p: (PROVIDER_URL, TEE.address),
+                 http=fake_embed_network(signer=IMPOSTOR))
