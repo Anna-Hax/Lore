@@ -13,6 +13,7 @@ Failure handling, because a dead Submitted job leaves a user's stake locked:
       uv run python -m jobs requeue verifier-jobs.db [job_id ...]
 """
 
+import json
 import logging
 import sqlite3
 import sys
@@ -25,6 +26,7 @@ from web3.exceptions import TimeExhausted
 import zg
 
 MAX_ATTEMPTS = 12
+MAX_ZG_ATTEMPTS = 3  # a model run that fails verification may cost money on retry: give up sooner
 TRANSIENT = (httpx.TransportError, requests.ConnectionError, requests.Timeout, TimeExhausted, zg.ZGUnavailable)
 log = logging.getLogger("lore.jobs")
 
@@ -41,6 +43,22 @@ def backoff(attempts: int) -> int:
     return min(3600, 30 * 2 ** (attempts - 1))
 
 
+class PaidCache:
+    """Paid 0G responses by request hash (zg.call's cache), so a retried job never pays again."""
+
+    def __init__(self, db: sqlite3.Connection):
+        self.db = db
+        db.execute("CREATE TABLE IF NOT EXISTS paid (request_hash TEXT PRIMARY KEY, data TEXT)")
+
+    def get(self, key: str) -> dict | None:
+        row = self.db.execute("SELECT data FROM paid WHERE request_hash=?", (key,)).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def put(self, key: str, value: dict) -> None:
+        with self.db:
+            self.db.execute("INSERT OR REPLACE INTO paid VALUES (?, ?)", (key, json.dumps(value)))
+
+
 class Jobs:
     def __init__(self, path: str, now=time.time):
         self.now = now
@@ -51,6 +69,7 @@ class Jobs:
             CREATE TABLE IF NOT EXISTS jobs (id INT PRIMARY KEY, block INT, status TEXT DEFAULT 'pending',
                                              attempts INT DEFAULT 0, next_try INT DEFAULT 0, error TEXT);
         """)
+        self.paid = PaidCache(self.db)
 
     def pull(self, chain, event: str, key: str, start_block: int, batch: int = 2000) -> None:
         """Queue every `event` in the next batch of blocks, keyed by args[key]."""
@@ -73,13 +92,13 @@ class Jobs:
         with self.db:
             self.db.execute("UPDATE jobs SET status='done', error=NULL WHERE id=?", (job_id,))
 
-    def failed(self, job_id: int, error: str) -> None:
+    def failed(self, job_id: int, error: str, max_attempts: int = MAX_ATTEMPTS) -> None:
         with self.db:
             attempts = self.db.execute(
                 "UPDATE jobs SET attempts=attempts+1, error=? WHERE id=? RETURNING attempts", (error[:500], job_id)
             ).fetchone()[0]
             self.db.execute("UPDATE jobs SET next_try=?, status=? WHERE id=?",
-                            (int(self.now()) + backoff(attempts), "dead" if attempts >= MAX_ATTEMPTS else "pending", job_id))
+                            (int(self.now()) + backoff(attempts), "dead" if attempts >= max_attempts else "pending", job_id))
 
     def requeue(self, ids: list[int] | None = None) -> int:
         """Give dead jobs (all, or these ids) a fresh set of attempts. Returns how many were requeued."""
@@ -112,7 +131,7 @@ def loop(jobs: Jobs, chain, *, event: str, key: str, start_block: int, handle, e
                     log.info("%s %s not ready: %s", event, j["id"], e)
                 except Exception as e:
                     log.exception("%s %s failed", event, j["id"])
-                    jobs.failed(j["id"], repr(e))
+                    jobs.failed(j["id"], repr(e), MAX_ZG_ATTEMPTS if isinstance(e, zg.ZGError) else MAX_ATTEMPTS)
         except Exception:
             log.exception("%s loop failed; retrying", event)
         if once:

@@ -65,12 +65,58 @@ def call(
     http: httpx.Client | None = None,
     retries: int = 5,
     sleep: Callable[[float], None] = time.sleep,
+    cache=None,
 ) -> tuple[str, dict]:
-    """Run one private, verified completion. Returns (output, InferenceReceipt)."""
+    """Run one private, verified completion. Returns (output, InferenceReceipt).
+
+    cache (get(key)/put(key, value), e.g. jobs.PaidCache) stores every paid response the moment the router
+    returns it, keyed by the request hash. A retry of the same request reuses it and only redoes the free
+    signature check, so Lore never pays twice for one request. Failures before payment raise ZGUnavailable
+    (free to retry); every failure after payment is a plain ZGError.
+    """
     http = http or httpx.Client(timeout=120)
     body = {"model": model, "messages": messages, "temperature": 0, "verify_tee": True}
-    headers = {"Authorization": f"Bearer {api_key}", **PRIVATE_HEADERS}
+    request_hash = _hash(body)
+    paid = cache.get(request_hash) if cache else None
+    if paid is None:
+        paid = _pay(http, body, api_key, retries, sleep)
+        if cache:
+            cache.put(request_hash, paid)
+    if paid["tee_verified"] is not True:
+        raise ZGError(f"router did not verify the TEE signature (tee_verified={paid['tee_verified']!r})")
+    output = paid["output"]
+    try:
+        url, tee_signer = provider_info(paid["provider"])
+        sig = http.get(f"{url}/v1/proxy/signature/{paid['chat_id']}", params={"model": model})
+        sig.raise_for_status()
+        sig = sig.json()
+        signer = check_signature(sig["text"], sig["signature"], tee_signer, output)
+    except ZGError:
+        raise
+    except Exception as e:  # already paid: never let this look transient (it would be retried for free, forever)
+        raise ZGError(f"could not verify a paid response: {e!r}") from e
 
+    receipt = {
+        "model": model,
+        "provider": paid["provider"],
+        "chat_id": paid["chat_id"],
+        "trust_mode": "private",
+        "tee_verified": True,
+        "signed_text": sig["text"],
+        "signature": sig["signature"],
+        "signer": signer,
+        "signer_matches_onchain": True,
+        "request_hash": request_hash,
+        "response_hash": _hash(output),
+        "prompt_version": prompt_version,
+        "created_at": datetime.now(UTC).isoformat(),
+    }
+    return output, receipt
+
+
+def _pay(http, body, api_key, retries, sleep) -> dict:
+    """The one paid step: a private completion from the router. Returns what we need to verify it later."""
+    headers = {"Authorization": f"Bearer {api_key}", **PRIVATE_HEADERS}
     for attempt in range(retries):
         r = http.post(f"{ROUTER}/chat/completions", json=body, headers=headers)
         if r.status_code == 503 and "no_provider_for_trust_mode" in r.text:
@@ -80,37 +126,10 @@ def call(
         break
     else:
         raise ZGUnavailable("no private (TeeML) provider available")
-
     data = r.json()
     trace = data.get("x_0g_trace") or {}
-    if trace.get("tee_verified") is not True:
-        raise ZGError(f"router did not verify the TEE signature (tee_verified={trace.get('tee_verified')!r})")
-    output = data["choices"][0]["message"]["content"]
-    provider = trace["provider"]
-    chat_id = r.headers.get("ZG-Res-Key") or data["id"]
-
-    url, tee_signer = provider_info(provider)
-    sig = http.get(f"{url}/v1/proxy/signature/{chat_id}", params={"model": model})
-    sig.raise_for_status()
-    sig = sig.json()
-    signer = check_signature(sig["text"], sig["signature"], tee_signer, output)
-
-    receipt = {
-        "model": model,
-        "provider": provider,
-        "chat_id": chat_id,
-        "trust_mode": "private",
-        "tee_verified": True,
-        "signed_text": sig["text"],
-        "signature": sig["signature"],
-        "signer": signer,
-        "signer_matches_onchain": True,
-        "request_hash": _hash(body),
-        "response_hash": _hash(output),
-        "prompt_version": prompt_version,
-        "created_at": datetime.now(UTC).isoformat(),
-    }
-    return output, receipt
+    return {"output": data["choices"][0]["message"]["content"], "provider": trace.get("provider"),
+            "chat_id": r.headers.get("ZG-Res-Key") or data["id"], "tee_verified": trace.get("tee_verified")}
 
 
 def json_out(output: str) -> dict:

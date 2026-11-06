@@ -952,6 +952,7 @@ dependencies = [
     { name = "eth-utils" },
     { name = "fastapi" },
     { name = "httpx" },
+    { name = "requests" },
     { name = "uvicorn" },
     { name = "web3" },
 ]
@@ -967,6 +968,7 @@ requires-dist = [
     { name = "eth-utils", specifier = ">=5" },
     { name = "fastapi", specifier = ">=0.110" },
     { name = "httpx", specifier = ">=0.27" },
+    { name = "requests", specifier = ">=2.31" },
     { name = "uvicorn", specifier = ">=0.30" },
     { name = "web3", specifier = ">=7,<8" },
 ]

@@ -338,3 +338,11 @@ def test_weak_leak_matches_are_never_recorded_on_chain(env):
     env.ev("LeakReported", reportId=8, topicId=1, reporter=BOB.address, evidenceHash=B32(leaked["evidence_hash"]))
     worker.match_leaks(env.db, env.chain, lambda text, cands: (ALICE.address.lower(), 1200), set())
     assert env.chain.sent == []
+
+
+def test_max_lag_tolerates_normal_indexing_jitter():
+    from gateway.app import MAX_LAG
+
+    galileo_block_seconds = 0.49  # measured on 0G Galileo
+    # Between two index passes the chain moves SYNC_EVERY seconds; leave room for a slow pass too.
+    assert MAX_LAG * galileo_block_seconds >= 5 * worker.SYNC_EVERY

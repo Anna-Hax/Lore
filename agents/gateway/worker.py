@@ -10,6 +10,9 @@ from gateway.db import connect, synced_block
 from gateway.indexer import apply
 
 log = logging.getLogger("lore.gateway")
+SYNC_EVERY = 3     # seconds between index passes: keeps the gateway within a few blocks of the chain
+SLOW_EVERY = 15    # metadata downloads and leak matching
+FINALIZE_EVERY = 60
 
 
 def sync(db, chain, start_block: int, batch: int = 2000) -> int:
@@ -88,17 +91,35 @@ def finalize_due(db, chain) -> None:
             log.warning("finalize %s failed: %s", sid, e)
 
 
-def run(db_path: str, chain, storage, best_match, start_block: int, every: int = 15) -> None:
-    db = connect(db_path)  # opened on this thread: sqlite connections stay with the thread that uses them
-    tried, last_finalize = set(), 0
+def run(db_path: str, chain, storage, best_match, start_block: int) -> None:
+    """Index on a fast loop; do slow work (downloads, transactions) on another thread so it never stalls indexing.
+
+    The vote-before-submit gate refuses /ingest when indexing falls more than MAX_LAG blocks behind, so
+    indexing must never wait on a storage download or a finalize receipt.
+    """
+    import threading
+
+    threading.Thread(target=_slow_loop, args=(db_path, chain, storage, best_match), daemon=True).start()
+    db = connect(db_path)  # each thread opens its own connection
     while True:
         try:
-            sync(db, chain, start_block)
+            while sync(db, chain, start_block) < chain.latest():  # catch up fully, then rest
+                pass
+        except Exception:
+            log.exception("index loop failed; retrying")
+        time.sleep(SYNC_EVERY)
+
+
+def _slow_loop(db_path: str, chain, storage, best_match) -> None:
+    db = connect(db_path)
+    tried, last_finalize = set(), 0.0
+    while True:
+        try:
             fill_meta(db, storage)
             match_leaks(db, chain, best_match, tried)
-            if time.time() - last_finalize >= 60:
+            if time.time() - last_finalize >= FINALIZE_EVERY:
                 finalize_due(db, chain)
                 last_finalize = time.time()
         except Exception:
-            log.exception("worker loop failed; retrying")
-        time.sleep(every)
+            log.exception("slow loop failed; retrying")
+        time.sleep(SLOW_EVERY)

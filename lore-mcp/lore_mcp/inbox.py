@@ -34,9 +34,14 @@ class Inbox:
         except (OSError, ValueError):
             self.state = {}
 
-    def refresh(self) -> None:
-        with self.refreshing:
+    def refresh(self, timeout: float | None = None) -> None:
+        """timeout: how long to wait for a refresh already in progress (None = as long as it takes)."""
+        if not self.refreshing.acquire(timeout=-1 if timeout is None else timeout):
+            raise TimeoutError("another inbox refresh is still running")
+        try:
             self._refresh()
+        finally:
+            self.refreshing.release()
 
     def _refresh(self) -> None:
         first_run = "since_node" not in self.state  # don't flood a brand-new user with history

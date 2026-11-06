@@ -91,3 +91,17 @@ def test_overlapping_refreshes_never_duplicate_updates(tmp_path):
     [t.start() for t in threads]
     [t.join() for t in threads]
     assert ib.take()["updates"] == ["New node #2 in topic 1: A", "New node #3 in topic 1: B"]
+
+
+def test_lore_inbox_does_not_wait_behind_a_stuck_refresh(monkeypatch):
+    import time
+
+    monkeypatch.setattr(server.inbox, "vote_tasks", [TASK])
+    server.inbox.refreshing.acquire()  # e.g. the startup check is stuck on a hung gateway
+    try:
+        started = time.monotonic()
+        monkeypatch.setattr(server.inbox, "refresh", lambda timeout=None: server.Inbox.refresh(server.inbox, timeout=0.2))
+        out = server.lore_inbox()
+        assert time.monotonic() - started < 2 and out["vote_tasks"] == [TASK] and "warning" in out
+    finally:
+        server.inbox.refreshing.release()

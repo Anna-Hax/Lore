@@ -23,7 +23,8 @@ from pydantic import BaseModel, Field
 from consts import MAX_CHARS
 
 INGEST_TTL = 600  # an ingest must be submitted on-chain within 10 min, so it can't skip votes assigned later
-MAX_LAG = 20      # blocks (~10 s on 0G): refuse ingests while the indexer is behind, or the vote gate is blind
+MAX_LAG = 60      # blocks (~30 s at 0G's ~0.49 s blocks; worker.SYNC_EVERY is 3 s): refuse ingests while the
+                  # indexer is really behind, or the vote gate is blind; normal sync jitter stays well under it
 from gateway import auth, tasks
 from gateway.db import connect, synced_block
 

@@ -13,9 +13,9 @@ PROVIDER_URL = "https://provider.example"
 OUTPUT = '{"relevant": true}'
 
 
-def fake_network(*, tee_verified=True, signed_text=OUTPUT, signer=TEE, busy=0, seen=None):
+def fake_network(*, tee_verified=True, signed_text=OUTPUT, signer=TEE, busy=0, seen=None, sig_down=0):
     """A MockTransport playing the router and the provider's signature endpoint."""
-    state = {"busy": busy}
+    state = {"busy": busy, "sig_down": sig_down}
 
     def handler(req: httpx.Request):
         if seen is not None:
@@ -34,6 +34,9 @@ def fake_network(*, tee_verified=True, signed_text=OUTPUT, signer=TEE, busy=0, s
                 },
             )
         assert req.url.path == "/v1/proxy/signature/chat-1"
+        if state["sig_down"]:
+            state["sig_down"] -= 1
+            raise httpx.ConnectError("provider signature endpoint unreachable")
         sig = signer.sign_message(encode_defunct(text=signed_text)).signature.to_0x_hex()
         return httpx.Response(200, json={"text": signed_text, "signature": sig})
 
@@ -85,3 +88,21 @@ def test_signature_from_wrong_key_is_rejected():
 def test_signed_text_not_matching_output_is_rejected():
     with pytest.raises(zg.ZGError, match="does not match"):
         run(fake_network(signed_text='{"relevant": false}'))
+
+
+def test_a_failure_after_payment_is_not_transient_and_a_retry_never_pays_again():
+    import jobs
+
+    seen, cache = [], {}
+
+    class Cache:
+        get = staticmethod(cache.get)
+        put = staticmethod(cache.__setitem__)
+
+    http = fake_network(sig_down=1, seen=seen)
+    with pytest.raises(zg.ZGError) as e:
+        run(http, cache=Cache)
+    assert not isinstance(e.value, jobs.TRANSIENT)  # the job queue counts it, so it can't loop for free
+    out, r = run(http, cache=Cache)  # retry: signature endpoint back
+    assert out == OUTPUT and r["signer"] == TEE.address
+    assert len([q for q in seen if q.url.path.endswith("/chat/completions")]) == 1  # paid exactly once

@@ -29,7 +29,8 @@ def upload_json(obj: dict) -> str:
     return storage.upload(json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode())
 
 
-def build(key_env: str) -> dict:
+def build(key_env: str, jobs) -> dict:
+    """jobs: the agent's jobs.Jobs; its PaidCache makes every 0G call pay at most once."""
     chain_id = int(os.environ.get("LORE_CHAIN_ID", 16602))
     dep = shared.deployment(chain_id)
     key = os.environ[key_env]
@@ -38,8 +39,9 @@ def build(key_env: str) -> dict:
         "chain": Chain.for_chain(chain_id, key, os.environ.get("LORE_RPC")),
         "gw": Gateway(os.environ["LORE_GATEWAY_URL"], key),
         "llm": lambda messages, version: zg.call(
-            model, messages, prompt_version=version, api_key=api_key, provider_info=provider_info
+            model, messages, prompt_version=version, api_key=api_key, provider_info=provider_info, cache=jobs.paid
         ),
+        "jobs": jobs,
         "upload_json": upload_json,
         "start_block": dep["deployBlock"],
     }

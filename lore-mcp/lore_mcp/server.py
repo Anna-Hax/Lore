@@ -113,7 +113,9 @@ Tool results end with a short "Lore inbox" notice whenever something new arrives
 
 lore = Lore()
 mcp = MCPServer("lore", instructions=INSTRUCTIONS)
-inbox = Inbox(lambda since: lore.gw("GET", "/inbox", params={"since_node": since}), Path("~/.lore-mcp/inbox.json").expanduser())
+# Inbox polls use a short timeout: a hung gateway must never hold the inbox for the client's 120 s default.
+inbox = Inbox(lambda since: lore.gw("GET", "/inbox", params={"since_node": since}, timeout=10),
+              Path("~/.lore-mcp/inbox.json").expanduser())
 
 
 def tool(fn):
@@ -161,8 +163,8 @@ def lore_inbox() -> dict:
     """What's new for you on Lore: open vote tasks (vote before submitting), status changes to your
     submissions, and new nodes in topics you bought or contributed to. Check this at the start of each session."""
     try:
-        inbox.refresh()
-    except Exception as e:  # show the last known inbox if the gateway is unreachable right now
+        inbox.refresh(timeout=5)
+    except Exception as e:  # gateway unreachable or a stuck refresh: show the last known inbox instead of waiting
         return {**inbox.take(), "warning": f"could not reach Lore just now ({e}); showing the last known inbox"}
     return inbox.take()
 
