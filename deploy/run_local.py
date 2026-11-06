@@ -5,6 +5,8 @@
 Each service gets only its own secret file from deploy/secrets/ (made by create_secrets.py), like launch.py does in
 Docker. State lives in deploy/state/. The gateway runs Lore's labelled demo login because World ID is not configured
 locally (LORE_DEMO_LOGIN=1). Needs uv, and a built storage CLI (python shared/storage_cli/build.py).
+The gateway signs users' transactions through Turnkey: export TURNKEY_ORGANIZATION_ID, TURNKEY_API_PUBLIC_KEY and
+TURNKEY_DELEGATED_PUBLIC_KEY (from secrets/addresses.json) first; the private keys come from secrets/gateway.env.
 Ctrl+C stops all three.
 """
 

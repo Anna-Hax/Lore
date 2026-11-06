@@ -5,6 +5,8 @@ LORE_GATEWAY_KEY (gateway wallet: holds LEAK_DETECTOR and REGISTRAR, pays finali
 WORLD_APP_ID, WORLD_RP_ID, WORLD_RP_SIGNING_KEY, WORLD_ACTION, WORLD_IDKIT_MODULE (see gateway/worldid.py),
 LORE_PUBLIC_URL (where users reach the hosted MCP, e.g. https://lore.example; the MCP is at /mcp),
 LORE_SERVICE_TOKEN (the secret the verifier and curator send to /internal/*),
+TURNKEY_ORGANIZATION_ID, TURNKEY_API_PUBLIC_KEY, TURNKEY_API_PRIVATE_KEY (Lore's Turnkey parent org key),
+TURNKEY_DELEGATED_PUBLIC_KEY, TURNKEY_DELEGATED_PRIVATE_KEY (Lore's delegated user in each user's sub-org),
 LORE_DB (sqlite path), LORE_PORT, plus whatever P3's lore_shared needs (MASTER_KEY, WM_SECRET, ...).
 LORE_DEMO_LOGIN=1 enables the labelled name-based demo login, and only while WORLD_APP_ID is unset (testnet demos).
 LORE_SITE_DIR (default ../site) is served at /app/.
@@ -21,6 +23,7 @@ import shared
 from chain import Chain
 from gateway import worker
 from gateway.app import create_app
+from gateway.turnkey import Turnkey
 from zg.providers import Providers
 from gateway.db import bind_deployment, connect
 from gateway.worldid import WorldID
@@ -51,9 +54,12 @@ def main():
     chain_info = {"chain_id": chain_id, "name": net.name, "explorer": net.explorer, "contracts": dep["contracts"]}
     site_dir = os.environ.get("LORE_SITE_DIR", str(Path(__file__).resolve().parents[2] / "site"))
     providers = Providers(int(os.environ.get("ZG_PROVIDER_CHAIN_ID", 16661)))  # spike S2: 0G mainnet
-    app = create_app(db_path, chain, content, storage, world=world, service_token=os.environ["LORE_SERVICE_TOKEN"],
-                     public_url=os.environ["LORE_PUBLIC_URL"], provider_signer=lambda p: providers(p)[1],
-                     demo_login=os.environ.get("LORE_DEMO_LOGIN") == "1", site_dir=site_dir, chain_info=chain_info,
+    e = os.environ
+    turnkey = Turnkey(e["TURNKEY_ORGANIZATION_ID"], (e["TURNKEY_API_PUBLIC_KEY"], e["TURNKEY_API_PRIVATE_KEY"]),
+                      (e["TURNKEY_DELEGATED_PUBLIC_KEY"], e["TURNKEY_DELEGATED_PRIVATE_KEY"]))
+    app = create_app(db_path, chain, content, storage, world=world, service_token=e["LORE_SERVICE_TOKEN"],
+                     public_url=e["LORE_PUBLIC_URL"], provider_signer=lambda p: providers(p)[1], turnkey=turnkey,
+                     demo_login=e.get("LORE_DEMO_LOGIN") == "1", site_dir=site_dir, chain_info=chain_info,
                      warm_overview=True)
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("LORE_PORT", 8080)))
 

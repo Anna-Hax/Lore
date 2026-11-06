@@ -33,6 +33,7 @@ from fastapi.staticfiles import StaticFiles
 from gateway.mcp_server import build_mcp
 from gateway.oauth import WorldIDOAuth
 from gateway.service import Service
+from gateway.signer import Signer
 from gateway.worldid import WorldIDError
 
 LOGIN_PAGE = """<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
@@ -41,7 +42,7 @@ LOGIN_PAGE = """<!doctype html><html><head><meta charset="utf-8"><meta name="vie
 .app{padding:.75rem 1rem;border:1px solid #8884;border-radius:.5rem}.warn{color:#b45309}button{font:inherit;padding:.5rem 1.25rem}</style>
 </head><body><h1>Log in to Lore with World ID</h1>
 <div class="app"><p><b>__CLIENT__</b> is asking to act as you on Lore: read topics you bought, see your vote tasks,
-and prepare transactions from your wallets.</p><p>After you approve, you will be sent to <b>__HOST__</b>.</p>__WARNING__</div>
+and send Lore transactions from your Lore wallet.</p><p>After you approve, you will be sent to <b>__HOST__</b>.</p>__WARNING__</div>
 <p>Only continue if you started this login from your own MCP client just now.</p>
 <p><button id="go">Approve and verify with World ID</button></p>
 <p id="s"></p><p><a id="l" hidden>Open in World App</a></p>
@@ -111,11 +112,14 @@ def login_page(p: dict, demo: bool = False) -> str:
 
 def create_app(db_path: str, chain, content, storage, now=lambda: int(time.time()), *, world=None,
                service_token: str | None = None, public_url: str = "http://127.0.0.1:8080",
-               provider_signer=None, demo_login: bool = False, site_dir: str | None = None,
+               provider_signer=None, turnkey=None, demo_login: bool = False, site_dir: str | None = None,
                chain_info: dict | None = None, warm_overview: bool = False) -> FastAPI:
     """world: gateway.worldid.WorldID (None: nobody can log in, unless demo_login). service_token: the verifier/curator
-    secret. demo_login: only when World ID is not configured, a clearly labelled name-based demo login (testnet demos)."""
-    service = Service(db_path, chain, content, storage, now, provider_signer)
+    secret. turnkey: gateway.turnkey.Turnkey (None: no wallets, so nothing can be signed). demo_login: only when World
+    ID is not configured, a clearly labelled name-based demo login (testnet demos)."""
+    service = Service(db_path, chain, content, storage, now, provider_signer, turnkey)
+    if turnkey is not None:
+        service.signer = Signer(chain, turnkey, service.managed_sub_org)
     oauth = WorldIDOAuth(db_path, public_url, now)
     mcp = build_mcp(service, oauth, public_url)
     mcp_app = mcp.streamable_http_app(host="0.0.0.0")  # also creates the session manager the lifespan runs

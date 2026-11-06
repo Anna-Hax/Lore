@@ -9,8 +9,29 @@ These need people or credentials, so they are not automated:
 
 - `agents/` merged, with P1's wiring from `e2e/DELIVERY_HANDOFF.md`.
 - `shared/storage_cli/bin/lore-storage-client` built (`python shared/storage_cli/build.py`).
-- A host chosen, with Docker Compose. Create a `lore` user with uid 10001.
+- A host with Docker Compose and a `lore` user with uid 10001. On Azure, `azure.sh` makes one (below).
 - A 0G Router API key created with `trust_mode: "private"`.
+
+## Azure host
+
+`azure.sh` prints what it will create and the cost, and asks before creating anything. It makes one
+Ubuntu 24.04 VM (B2s in Malaysia West by default), a static IP with a free
+`<label>.<region>.cloudapp.azure.com` name, a firewall (80 and 443 open, 22 only from your IP) and a storage
+account for nightly sqlite backups. First boot installs Docker, Caddy and the backup cron, and adds 2 GB of swap.
+
+```sh
+az login
+deploy/azure.sh                           # prints LORE_PUBLIC_URL at the end
+ssh lore-admin@<label>.malaysiawest.cloudapp.azure.com
+cloud-init status --wait                  # first boot takes a few minutes
+git clone <repo> /opt/lore && cd /opt/lore/deploy
+sudo cp Caddyfile /etc/caddy/Caddyfile && sudo systemctl reload caddy
+```
+
+Then follow "First deploy" from `/opt/lore/deploy`, with `LORE_PUBLIC_URL` set to the printed `https://` URL
+(also the World ID app's and Turnkey's allowed origin). Backups land in the `backups` container under one
+folder per night; the SAS in `/etc/lore-backup.env` can only write, and expires after a year. Delete
+everything with `az group delete -n lore`.
 
 ## First deploy
 
@@ -19,14 +40,14 @@ cd deploy
 python create_secrets.py                  # refuses to overwrite; prints addresses only
 # Add ZG_API_KEY to secrets/verifier.env and secrets/curator.env.
 # Fund every wallet in secrets/addresses.json with testnet 0G: https://faucet.0g.ai
-# Ask P2 to grant roles: gateway=LEAK_DETECTOR, verifier=VERIFIER, curator=CURATOR.
+# Ask P2 to grant roles: gateway=LEAK_DETECTOR and REGISTRAR, verifier=VERIFIER, curator=CURATOR.
 python check_roles.py                     # exit 0 only when roles and gas are in place
 mkdir -p state/gateway state/verifier state/curator
 sudo chown -R 10001:10001 state
 ZG_MODEL=glm-5.3 docker compose up -d --build
 ```
 
-The gateway binds to `127.0.0.1:8080`. Put a TLS reverse proxy in front of it.
+The gateway binds to `127.0.0.1:8080`. Caddy (`Caddyfile`) serves it over TLS and keeps `/internal/*` private.
 Back up `secrets/` and `state/` off the host; `MASTER_KEY` loss loses all content.
 
 ## Redeploy

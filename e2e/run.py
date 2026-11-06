@@ -1,15 +1,16 @@
 """BUILD_PLAN workstream E: four people's agents drive Lore through the hosted MCP server, then we assert the chain.
 
-Each agent logs in (OAuth; the gateway's labelled demo login when World ID is not configured), links its wallet with
-lore_link_wallet, and signs + sends every transaction the tools return LOCALLY with its own key, exactly like a
-user's agent would. Only gas (0G) and MockUSDC funding happen outside MCP.
+Each agent logs in (OAuth; the gateway's labelled demo login when World ID is not configured) and creates its
+Turnkey wallet with lore_create_wallet, exactly like a user's agent would; Lore signs every transaction from it.
+Only gas (0G) and MockUSDC funding happen outside MCP. The gateway needs Lore's Turnkey keys (BUILD_PLAN spike T1).
 
     python deploy/run_local.py                                   # in one terminal: gateway, verifier, curator
     uv run --project agents --python 3.12 python e2e/run.py      # in another
 
 Env: LORE_GATEWAY_URL (default http://127.0.0.1:8080), LORE_CHAIN_ID (default 16602), E2E_TAG (default random;
 "none" submits the corpus text as is, for a fresh showcase deployment), E2E_TIMEOUT (seconds per wait, default 900).
-Agent keys are kept in deploy/state/e2e-agents.json; gas comes from DEPLOYER_PRIVATE_KEY in contracts/.env.
+E2E_EMAIL_DOMAIN (default example.com) names each agent's Turnkey user (lore-e2e-<name>@<domain>); gas and MockUSDC
+come from DEPLOYER_PRIVATE_KEY in contracts/.env.
     ... python e2e/run.py --check    # log in and list the MCP tools only; no chain writes
 """
 
@@ -27,7 +28,6 @@ import time
 from urllib.parse import parse_qs, urlparse
 
 from eth_account import Account
-from eth_account.messages import encode_defunct
 
 from lore_shared.chain import ChainReader
 from lore_shared.watermark import FRAME, ONE, ZERO
@@ -37,7 +37,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import corpus  # noqa: E402
 
 TOOLS = {
-    "lore_inbox", "lore_whoami", "lore_link_wallet", "lore_list_topics", "lore_get_topic", "lore_my_vote_tasks",
+    "lore_inbox", "lore_whoami", "lore_create_wallet", "lore_wallet", "lore_list_topics", "lore_get_topic", "lore_my_vote_tasks",
     "lore_get_vote_task", "lore_vote", "lore_submit", "lore_buy", "lore_read_topic", "lore_claimable", "lore_claim",
     "lore_report_leak", "lore_check_proof",
 }
@@ -100,12 +100,11 @@ def login(gateway: str, name: str) -> str:
 
 
 class Agent:
-    """One person's agent: an MCP session as that person plus a local wallet that signs what the tools return."""
+    """One person's agent: an MCP session as that person, with a Lore (Turnkey) wallet that Lore signs from."""
 
-    def __init__(self, name: str, key: str, session, reader: ChainReader):
-        self.name, self.key, self.session, self.reader = name, key, session, reader
-        self.acct = Account.from_key(key)
-        self.address = self.acct.address
+    def __init__(self, name: str, session, reader: ChainReader):
+        self.name, self.session, self.reader = name, session, reader
+        self.address = None  # set by create_wallet
 
     async def tool(self, name: str, **arguments):
         result = await self.session.call_tool(name, arguments)
@@ -120,33 +119,18 @@ class Agent:
         except ValueError:
             return text
 
-    def send(self, txs: list[dict]) -> list[str]:
-        """Sign and send each prepared transaction locally, in order; the key never leaves this process."""
-        w3, hashes = self.reader.web3, []
-        for t in txs:
-            assert t["from"].lower() == self.address.lower(), f"{t['description']} is not for {self.name}'s wallet"
-            tx = {"to": t["to"], "data": t["data"], "value": int(t.get("value", 0)), "chainId": int(t["chain_id"]),
-                  "from": self.address, "nonce": w3.eth.get_transaction_count(self.address, "pending"),
-                  "gasPrice": w3.eth.gas_price}
-            tx["gas"] = int(w3.eth.estimate_gas(tx) * 1.3)
-            h = w3.eth.send_raw_transaction(self.acct.sign_transaction(tx).raw_transaction)
-            receipt = w3.eth.wait_for_transaction_receipt(h, timeout=180)
-            assert receipt.status == 1, f"{self.name}: {t['description']} reverted ({h.hex()})"
-            hashes.append("0x" + bytes(h).hex())
-        return hashes
-
     async def act(self, tool: str, **arguments):
+        """A tool that changes chain state: Lore signs and sends, and returns once every transaction is mined."""
         out = await self.tool(tool, **arguments)
-        txs = out.get("transactions") if isinstance(out, dict) else None
-        if txs:
-            await asyncio.to_thread(self.send, txs)
+        assert out.get("tx_hashes"), f"{self.name}: {tool} sent nothing"
         return out
 
-    async def link(self) -> None:
-        ask = await self.tool("lore_link_wallet", wallet=self.address)
-        sig = self.acct.sign_message(encode_defunct(text=ask["sign_this"])).signature.to_0x_hex()
-        who = await self.tool("lore_link_wallet", wallet=self.address, signature=sig)
-        assert self.address.lower() in who["wallets"], f"{self.name}: wallet not linked"
+    async def create_wallet(self) -> None:
+        domain = os.environ.get("E2E_EMAIL_DOMAIN", "example.com")
+        out = await self.tool("lore_create_wallet", email=f"lore-e2e-{self.name}@{domain}")
+        self.address = self.reader.web3.to_checksum_address(out["address"])
+        who = await self.tool("lore_whoami")
+        assert out["address"].lower() in who["wallets"], f"{self.name}: wallet not linked"
 
 
 async def wait_for(description: str, check, every: float = 5):
@@ -157,16 +141,6 @@ async def wait_for(description: str, check, every: float = 5):
             return value
         await asyncio.sleep(every)
     raise TimeoutError(f"timed out waiting for {description}")
-
-
-def agent_keys() -> dict[str, str]:
-    path = ROOT / "deploy" / "state" / "e2e-agents.json"
-    keys = json.loads(path.read_text()) if path.exists() else {}
-    for name in PEOPLE:
-        keys.setdefault(name, "0x" + secrets.token_hex(32))
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(keys, indent=2))
-    return keys
 
 
 def deployer_key() -> str:
@@ -371,10 +345,6 @@ async def main_async(check_only: bool, resume: bool = False) -> None:
     reader = ChainReader(int(os.environ.get("LORE_CHAIN_ID", 16602)))
     tag_env = os.environ.get("E2E_TAG")
     tag = None if tag_env == "none" else (tag_env or secrets.token_hex(3))
-    keys = agent_keys()
-    if not check_only:
-        say("funding test agents (gas + MockUSDC, testnet only)")
-        await asyncio.to_thread(fund, reader, [Account.from_key(k).address for k in keys.values()], 60_000000)
 
     from contextlib import AsyncExitStack
 
@@ -387,7 +357,7 @@ async def main_async(check_only: bool, resume: bool = False) -> None:
             streams = await stack.enter_async_context(streamable_http_client(f"{gateway}/mcp", http_client=http))
             session = await stack.enter_async_context(ClientSession(streams[0], streams[1]))
             await session.initialize()
-            agents[name] = Agent(name, keys[name], session, reader)
+            agents[name] = Agent(name, session, reader)
         names = {t.name for t in (await agents["ada"].session.list_tools()).tools}
         missing = TOOLS - names
         assert not missing, f"hosted MCP is missing tools: {sorted(missing)}"
@@ -395,8 +365,10 @@ async def main_async(check_only: bool, resume: bool = False) -> None:
         if check_only:
             return
         for agent in agents.values():
-            await agent.link()
-        say("wallets linked to their people on-chain (PersonRegistry)")
+            await agent.create_wallet()  # the same wallet again on a rerun: one per person
+        say("Turnkey wallets created and linked to their people on-chain (PersonRegistry)")
+        say("funding test agents (gas + MockUSDC, testnet only)")
+        await asyncio.to_thread(fund, reader, [a.address for a in agents.values()], 60_000000)
         result = await Scenario(reader, agents, tag).run(resume)
         say("END-TO-END PASSED: " + json.dumps(result))
 
