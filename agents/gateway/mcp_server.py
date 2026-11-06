@@ -122,7 +122,8 @@ def build_mcp(service, oauth, public_url: str) -> MCPServer:
     @tool
     def lore_vote(sub_id: int, approve: bool) -> dict:
         """Vote yes or no on a submission (one vote per person). Sends the vote from your wallet."""
-        return service.send(service.prepare_vote(person(), sub_id, approve))
+        return service.checkpoint(person(), f"vote {'yes' if approve else 'no'} on submission {sub_id}",
+                                  service.prepare_vote(person(), sub_id, approve))
 
     @tool
     def lore_submit(text: str, topic_id: int = 0, wallet: str = "", confirm: bool = False) -> dict:
@@ -131,7 +132,9 @@ def build_mcp(service, oauth, public_url: str) -> MCPServer:
         if not confirm:
             return {"confirm": f"This stakes {service.chain.stake() / 1e6:g} USDC. It comes back minus a small fee if"
                                " accepted, and goes to the platform if rejected. Call again with confirm=true."}
-        return service.send(service.prepare_submit(person(), text, topic_id, wallet or None))
+        prepared = service.prepare_submit(person(), text, topic_id, wallet or None)
+        return service.checkpoint(person(), f"stake {service.chain.stake() / 1e6:g} USDC and submit research to "
+                                  f"{'a new topic' if not topic_id else f'topic {topic_id}'}", prepared)
 
     @tool
     def lore_buy(topic_id: int, wallet: str = "", confirm: bool = False) -> dict:
@@ -139,7 +142,8 @@ def build_mcp(service, oauth, public_url: str) -> MCPServer:
         if not confirm:
             return {"confirm": f"This costs {service.chain.topic_price() / 1e6:g} USDC for permanent access to topic"
                                f" {topic_id}. Call again with confirm=true."}
-        return service.send(service.prepare_buy(person(), topic_id, wallet or None))
+        return service.checkpoint(person(), f"pay {service.chain.topic_price() / 1e6:g} USDC for topic {topic_id}",
+                                  service.prepare_buy(person(), topic_id, wallet or None))
 
     @tool
     def lore_read_topic(topic_id: int) -> dict:
@@ -154,12 +158,18 @@ def build_mcp(service, oauth, public_url: str) -> MCPServer:
     @tool
     def lore_claim() -> dict:
         """Claim all your royalties into the wallets that earned them."""
-        return service.send(service.prepare_claim(person()))
+        return service.checkpoint(person(), "claim royalties", service.prepare_claim(person()))
 
     @tool
     def lore_report_leak(topic_id: int, text: str, wallet: str = "") -> dict:
         """Report text from a Lore topic that is being shared or sold elsewhere."""
         return service.send(service.prepare_report_leak(person(), topic_id, text, wallet or None))
+
+    @tool
+    def lore_continue(checkpoint_id: str) -> dict:
+        """After your human approved an action with World ID (the approve_url a tool returned), send it. Each
+        approval works once, only for that action, and expires; denied or expired approvals send nothing."""
+        return service.continue_action(person(), checkpoint_id)
 
     @tool
     def lore_check_proof(root: str, claimed_output_json: str = "") -> dict:

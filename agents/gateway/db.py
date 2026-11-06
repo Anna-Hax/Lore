@@ -31,6 +31,12 @@ CREATE TABLE IF NOT EXISTS oauth_tokens  (token TEXT PRIMARY KEY, kind TEXT, cli
 -- Wallets Lore created on Turnkey with delegated access (gateway/turnkey.py).
 CREATE TABLE IF NOT EXISTS turnkey_wallets (person TEXT PRIMARY KEY, email TEXT, created_ms INT,  -- one wallet a person
                                             address TEXT UNIQUE, sub_org TEXT, ready INT NOT NULL DEFAULT 0);
+-- World ID Agent Pass (gateway/worldidp.py): one row per OIDC attempt; state/nonce/PKCE verifier never leave us.
+CREATE TABLE IF NOT EXISTS idp_attempts  (state TEXT PRIMARY KEY, nonce TEXT, verifier TEXT, purpose TEXT, pending TEXT,
+                                          checkpoint TEXT, created INT);
+-- Human checkpoints: an agent action Lore will only sign after a fresh World ID approval by the same person.
+CREATE TABLE IF NOT EXISTS checkpoints   (id TEXT PRIMARY KEY, person TEXT, action TEXT, prepared TEXT, status TEXT,
+                                          created INT, decided INT, reason TEXT, tx_hashes TEXT);
 -- What each person has already been told about (lore_inbox).
 CREATE TABLE IF NOT EXISTS inbox_state   (person TEXT PRIMARY KEY, since_node INT, subs TEXT);
 """

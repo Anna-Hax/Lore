@@ -8,6 +8,7 @@ Plaintext only leaves after a live on-chain check: access (buyers) or vote eligi
 """
 
 import json
+import secrets
 import re
 import threading
 import time
@@ -137,6 +138,75 @@ class Service:
             managed = {r[0] for r in conn.execute("SELECT address FROM turnkey_wallets WHERE person=? AND ready",
                                                   (person,))}
         return {"wallets": [{"address": w, "lore_can_sign": w in managed, **self.chain.balances(w)} for w in mine]}
+
+    # --- human checkpoints (World ID Agent Pass): Lore signs nothing for an agent until its person approves ---
+    CHECKPOINT_TTL = 600     # seconds to approve
+    APPROVAL_TTL = 300       # seconds an approval stays usable
+    approve_base = None      # e.g. https://localhost:8443; set by create_app when World IdP is configured
+
+    def checkpoint(self, person: str, action: str, prepared: dict) -> dict:
+        """Hold a prepared action (its transactions, never plaintext) until the person approves it with World ID."""
+        if not self.approve_base:
+            return self.send(prepared)
+        cid = secrets.token_urlsafe(12)
+        with self.tx() as conn:
+            conn.execute("INSERT INTO checkpoints VALUES (?, ?, ?, ?, 'pending', ?, NULL, NULL, NULL)",
+                         (cid, person, action, json.dumps(prepared), self.now()))
+        return {"human_approval_required": True, "checkpoint_id": cid, "action": action,
+                "approve_url": f"{self.approve_base}/checkpoint/{cid}", "expires_in_seconds": self.CHECKPOINT_TTL,
+                "next": "Ask your human to open approve_url and approve with World ID, then call lore_continue."}
+
+    def checkpoint_row(self, cid: str) -> dict | None:
+        with self.tx() as conn:
+            r = conn.execute("SELECT * FROM checkpoints WHERE id=?", (cid,)).fetchone()
+            if r and r["status"] == "pending" and self.now() - r["created"] > self.CHECKPOINT_TTL:
+                conn.execute("UPDATE checkpoints SET status='expired', decided=?, reason=? WHERE id=? AND status='pending'",
+                             (self.now(), "not approved in time", cid))
+                r = conn.execute("SELECT * FROM checkpoints WHERE id=?", (cid,)).fetchone()
+        return dict(r) if r else None
+
+    def decide(self, cid: str, approved: bool, reason: str) -> dict | None:
+        """Record a World ID outcome for a pending checkpoint (only ever moves pending -> approved/denied)."""
+        with self.tx() as conn:
+            conn.execute("UPDATE checkpoints SET status=?, decided=?, reason=? WHERE id=? AND status='pending'",
+                         ("approved" if approved else "denied", self.now(), reason, cid))
+        return self.checkpoint_row(cid)
+
+    def continue_action(self, person: str, cid: str) -> dict:
+        """Send a checkpointed action, once, only if this person approved it with a fresh World ID check."""
+        r = self.checkpoint_row(cid)
+        if not r or r["person"] != person:
+            raise LoreError("no such approval for you")
+        if r["status"] == "pending":
+            return {"status": "waiting_for_approval", "approve_url": f"{self.approve_base}/checkpoint/{cid}"}
+        if r["status"] == "approved" and self.now() - r["decided"] > self.APPROVAL_TTL:
+            with self.tx() as conn:
+                conn.execute("UPDATE checkpoints SET status='expired', reason=? WHERE id=? AND status='approved'",
+                             ("approval not used in time", cid))
+            r = self.checkpoint_row(cid)
+        if r["status"] != "approved":
+            raise LoreError(f"blocked: this action was {r['status']} ({r['reason']}); nothing was signed or sent")
+        with self.tx() as conn:  # single use: claim it before sending
+            if not conn.execute("UPDATE checkpoints SET status='used' WHERE id=? AND status='approved' RETURNING id",
+                                (cid,)).fetchone():
+                raise LoreError("this approval was already used")
+        out = self.send(json.loads(r["prepared"]))
+        with self.tx() as conn:
+            conn.execute("UPDATE checkpoints SET tx_hashes=? WHERE id=?", (json.dumps(out.get("tx_hashes")), cid))
+        return {"status": "sent", "action": r["action"], **out}
+
+    def recent_checkpoints(self, limit: int = 20) -> list[dict]:
+        with self.tx() as conn:
+            rows = conn.execute("SELECT id, action, status, created, decided, reason FROM checkpoints"
+                                " ORDER BY created DESC LIMIT ?", (limit,)).fetchall()
+        out = []
+        for r in rows:
+            r = dict(r)
+            if r["status"] == "pending" and self.now() - r["created"] > self.CHECKPOINT_TTL:
+                r["status"], r["reason"] = "expired", "not approved in time"
+            out.append({"checkpoint": r["id"][:6], "action": r["action"], "status": r["status"],
+                        "created": r["created"], "decided": r["decided"], "reason": r["reason"]})
+        return out
 
     def send(self, prepared: dict) -> dict:
         """Sign and broadcast a prepare_* result's transactions, in order. Returns it with their hashes."""
@@ -423,6 +493,7 @@ class Service:
                       "royalties_usdc": volume - volume * params["platform_cut_bps"] // 10_000,
                       "leak_reports": len(reports), "leaks_traced": sum(1 for r in reports if r["matched_wallet"])},
             "topics": out_topics, "nodes": out_nodes, "submissions": out_subs, "reports": out_reports,
+            "checkpoints": self.recent_checkpoints(),
         }
 
     # --- inbox ---
