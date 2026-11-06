@@ -35,6 +35,10 @@ def test_generated_secrets_are_private_separate_and_accepted_by_launch(tmp_path)
     for service in ("verifier", "curator"):
         path = directory / f"{service}.env"
         path.write_text(path.read_text().replace("ZG_API_KEY=", "ZG_API_KEY=router-key"))
+    gateway = directory / "gateway.env"  # Turnkey issues the parent-org key; the operator adds it
+    with pytest.raises(ValueError):
+        launch.secret_environment("gateway", gateway.read_text())
+    gateway.write_text(gateway.read_text().replace("TURNKEY_API_PRIVATE_KEY=", "TURNKEY_API_PRIVATE_KEY=" + "7" * 64))
     storage = set()
     for service in launch.REQUIRED:
         text = (directory / f"{service}.env").read_text()
@@ -104,9 +108,15 @@ def test_role_check_reports_missing_roles_and_gas():
         web3 = SimpleNamespace(eth=SimpleNamespace(get_balance=lambda address: 0 if address == "0xb" else 1))
 
         def call(self, contract, method, *args):
-            return args[1] != "0xc" if method == "hasRole" else method
+            if method != "hasRole":
+                return method  # the role's name stands in for its id
+            return args[1] != "0xc" and (args[0], args[1]) != ("REGISTRAR_ROLE", "0xd")
 
     good = check_roles.check(Reader(), {"gateway": "0xa", "verifier": "0xa", "curator": "0xa"})
     assert good["ready"] is True
     bad = check_roles.check(Reader(), {"gateway": "0xa", "verifier": "0xb", "curator": "0xc"})
-    assert bad["ready"] is False and bad["roles"]["curator"] is False and bad["funded"]["verifier"] is False
+    assert bad["ready"] is False and bad["roles"]["curator CURATOR_ROLE"] is False and bad["funded"]["verifier"] is False
+    no_registrar = check_roles.check(Reader(), {"gateway": "0xd", "verifier": "0xa", "curator": "0xa"})
+    assert no_registrar["ready"] is False and no_registrar["roles"] == {
+        "gateway LEAK_DETECTOR_ROLE": True, "gateway REGISTRAR_ROLE": False, "verifier VERIFIER_ROLE": True,
+        "curator CURATOR_ROLE": True}
