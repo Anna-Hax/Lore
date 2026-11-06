@@ -26,6 +26,7 @@ from web3 import Web3
 from lore_mcp import proof
 from lore_mcp import contracts
 from lore_mcp.inbox import Inbox
+from lore_mcp.providers import Providers
 from lore_mcp.worldid import Verification
 
 CHAIN_ID = int(os.environ.get("LORE_CHAIN_ID", contracts.DEFAULT_CHAIN_ID))
@@ -294,14 +295,20 @@ def lore_check_proof(root: str, claimed_output_json: str = "") -> dict:
     claim = json.loads(claimed_output_json) if claimed_output_json else None
     try:
         onchain = provider_signer(receipt["provider"])
-    except NotImplementedError:
+    except Exception:  # RPC down or provider unknown: report "incomplete", never a false "pass"
         onchain = None
     return proof.check(receipt, onchain, claim)
 
 
+_providers = None
+
+
 def provider_signer(provider: str) -> str:
-    # ponytail: blocked on spike S q2 (0G Service contract + method returning teeSignerAddress).
-    raise NotImplementedError
+    """The provider's TEE signer from 0G's on-chain record (mainnet by default; LORE_ZG_RPC to override)."""
+    global _providers
+    if _providers is None:
+        _providers = Providers(int(os.environ.get("LORE_ZG_CHAIN_ID", 16661)), os.environ.get("LORE_ZG_RPC"))
+    return _providers(provider)[1]
 
 
 def main():

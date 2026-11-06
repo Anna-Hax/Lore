@@ -1,32 +1,29 @@
 """Wires the verifier and curator to the real world from env vars.
 
 Env: LORE_CHAIN_ID (default 16602), LORE_RPC (optional override), LORE_GATEWAY_URL, ZG_API_KEY (a trust_mode=private key),
-ZG_MODEL (a TeeML model), plus the agent's role key (LORE_VERIFIER_KEY / LORE_CURATOR_KEY).
+ZG_MODEL (a TeeML model, e.g. glm-5.3), ZG_PROVIDER_CHAIN_ID (default 16661), plus the agent's role key (LORE_VERIFIER_KEY / LORE_CURATOR_KEY).
 """
 
-import json
 import os
+
+from lore_shared import storage
+from lore_shared.canonical import canonical_json
 
 import shared
 import zg
 from chain import Chain
 from gwclient import Gateway
-
-
-def provider_info(provider: str) -> tuple[str, str]:
-    # ponytail: blocked on spike S q2 (which 0G contract/method returns a provider's url + teeSignerAddress).
-    raise NotImplementedError("provider lookup pending spike S question 2")
+from zg.providers import Providers
 
 
 def embed(text: str) -> list[float]:
-    # ponytail: blocked on spike S q4 (TeeML embedding model on the router, else a local model).
-    raise NotImplementedError("embedding model pending spike S question 4")
+    # ponytail: spike S4 picked qwen3-embedding-8b (TeeML on the router). Calling it privately and verified
+    # needs a Router key to confirm the embeddings response and signature shape (spike S1).
+    raise NotImplementedError("embeddings pending spike S1 (model: qwen3-embedding-8b)")
 
 
 def upload_json(obj: dict) -> str:
-    from lore_shared import storage  # ponytail: P3's library
-
-    return storage.upload(json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode())
+    return storage.upload(canonical_json(obj).encode())
 
 
 def build(key_env: str, jobs) -> dict:
@@ -35,6 +32,8 @@ def build(key_env: str, jobs) -> dict:
     dep = shared.deployment(chain_id)
     key = os.environ[key_env]
     model, api_key = os.environ["ZG_MODEL"], os.environ["ZG_API_KEY"]
+    # Spike S2: the Router's providers are on 0G mainnet, so their records are read there.
+    provider_info = Providers(int(os.environ.get("ZG_PROVIDER_CHAIN_ID", 16661)))
     return {
         "chain": Chain.for_chain(chain_id, key, os.environ.get("LORE_RPC")),
         "gw": Gateway(os.environ["LORE_GATEWAY_URL"], key),
