@@ -1,0 +1,26 @@
+{
+  "environment_present": {
+    "ZG_API_KEY": false,
+    "ZG_MODEL": false,
+    "ZG_STORAGE_PRIVATE_KEY": false
+  },
+  "kind": "offline-preflight",
+  "live_checks_executed": false,
+  "modules_present": {
+    "eth_account": false,
+    "openai": false,
+    "web3": false
+  },
+  "python": "3.12.12",
+  "python_supported": true,
+  "team_files_present": {
+    "local_mcp": false,
+    "network_config": true,
+    "zg_client": false
+  },
+  "tools_present": {
+    "0g-compute-cli": false,
+    "docker": false,
+    "lore-storage-client": false
+  }
+}

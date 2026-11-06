@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "lore-shared"
+version = "0.1.0"
+description = "Shared content primitives for Lore's hosted gateway"
+requires-python = ">=3.12"
+dependencies = ["cryptography>=44,<47", "eth-hash[pycryptodome]>=0.7,<1"]
+
+[dependency-groups]
+dev = ["pytest>=8,<10"]
+platform = ["web3>=7,<8", "mcp>=2.3,<3", "PyYAML>=6,<7"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["lore_shared"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

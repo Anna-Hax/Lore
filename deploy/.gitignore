@@ -1,0 +1,8 @@
+.env
+.env.*
+!.env.example
+secrets/
+state/
+local-evidence/
+__pycache__/
+.pytest_cache/

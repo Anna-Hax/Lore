@@ -1,0 +1,97 @@
+{
+  "source": "GET https://router-api.0g.ai/v1/models (no key)",
+  "fetched": "2026-11-06",
+  "total_models": 125,
+  "verifiable": [
+    {
+      "id": "0gm-1.0-35b-a3b",
+      "type": "chatbot",
+      "verifiability": "TeeML",
+      "tee_type": "TDX",
+      "tee_verifier": "dstack",
+      "provider_count": 1,
+      "context_length": 262144
+    },
+    {
+      "id": "0gm-1.0-35b-a3b-sia",
+      "type": "chatbot",
+      "verifiability": "TeeML",
+      "tee_type": "TDX",
+      "tee_verifier": "dstack",
+      "provider_count": 1,
+      "context_length": 32768
+    },
+    {
+      "id": "laya",
+      "type": "decisions",
+      "verifiability": "TeeML",
+      "tee_type": "TDX",
+      "tee_verifier": "dstack",
+      "provider_count": 1,
+      "context_length": 512
+    },
+    {
+      "id": "glm-5.3",
+      "type": "chatbot",
+      "verifiability": "TeeML",
+      "tee_type": null,
+      "tee_verifier": "dstack",
+      "provider_count": 2,
+      "context_length": 1179648
+    },
+    {
+      "id": "whisper-large-v3",
+      "type": "speech-to-text",
+      "verifiability": "TeeML",
+      "tee_type": "TDX",
+      "tee_verifier": "dstack",
+      "provider_count": 1,
+      "context_length": 448
+    },
+    {
+      "id": "qwen3-embedding-0.6b",
+      "type": "embedding",
+      "verifiability": "TeeML",
+      "tee_type": "TDX",
+      "tee_verifier": "dstack",
+      "provider_count": 1,
+      "context_length": 32768
+    },
+    {
+      "id": "qwen3-embedding-8b",
+      "type": "embedding",
+      "verifiability": "TeeML",
+      "tee_type": "TDX",
+      "tee_verifier": "dstack",
+      "provider_count": 1,
+      "context_length": 32768
+    },
+    {
+      "id": "qwen3.7-text-embedding",
+      "type": "embedding",
+      "verifiability": "TeeTLS",
+      "tee_type": "TDX",
+      "tee_verifier": "dstack",
+      "provider_count": 1,
+      "context_length": 128000
+    },
+    {
+      "id": "vela-2.0-9b",
+      "type": "decisions",
+      "verifiability": "TeeML",
+      "tee_type": "TDX",
+      "tee_verifier": "dstack",
+      "provider_count": 1,
+      "context_length": 16384
+    },
+    {
+      "id": "z-image-turbo",
+      "type": "text-to-image",
+      "verifiability": "TeeML",
+      "tee_type": "TDX",
+      "tee_verifier": "dstack",
+      "provider_count": 1,
+      "context_length": 2048
+    }
+  ]
+}
