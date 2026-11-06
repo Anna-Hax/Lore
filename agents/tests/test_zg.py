@@ -145,3 +145,10 @@ def test_embed_is_private_and_signature_checked():
     with pytest.raises(zg.ZGError, match="not the provider's TEE signer"):
         zg.embed("t", model="m", api_key="k", provider_info=lambda p: (PROVIDER_URL, TEE.address),
                  http=fake_embed_network(signer=IMPOSTOR))
+
+
+def test_rate_limit_backs_off_and_then_raises_unavailable_not_a_paid_failure():
+    def handler(request):
+        return httpx.Response(429, json={"error": "rate limited"})
+    with pytest.raises(zg.ZGUnavailable):
+        run(httpx.Client(transport=httpx.MockTransport(handler)))

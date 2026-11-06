@@ -125,13 +125,18 @@ def call(
     return output, receipt
 
 
+def _busy(r) -> bool:
+    """Nothing was charged and trying again later is safe: no private provider right now, or rate limited (429)."""
+    return r.status_code == 429 or (r.status_code == 503 and "no_provider_for_trust_mode" in r.text)
+
+
 def _pay(http, body, api_key, retries, sleep) -> dict:
     """The one paid step: a private completion from the router. Returns what we need to verify it later."""
     headers = {"Authorization": f"Bearer {api_key}", **PRIVATE_HEADERS}
     for attempt in range(retries):
         r = http.post(f"{ROUTER}/chat/completions", json=body, headers=headers)
-        if r.status_code == 503 and "no_provider_for_trust_mode" in r.text:
-            sleep(2**attempt)  # wait for a private provider; never downgrade the trust tier
+        if _busy(r):
+            sleep(2**attempt)  # wait for a private provider or rate limit; never downgrade the trust tier
             continue
         r.raise_for_status()
         break
@@ -171,7 +176,7 @@ def embed(
     body = {"model": model, "input": [text], "verify_tee": True}
     for attempt in range(retries):
         r = http.post(f"{ROUTER}/embeddings", json=body, headers=headers)
-        if r.status_code == 503 and "no_provider_for_trust_mode" in r.text:
+        if _busy(r):
             sleep(2**attempt)
             continue
         r.raise_for_status()
