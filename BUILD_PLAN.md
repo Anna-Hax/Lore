@@ -16,7 +16,7 @@ Audience: the coding agents (and their humans) building Lore v1. Read this whole
 
 Handoffs:
 - **P2 → P1, P3:** ABIs and deployment addresses in `shared`. Use the local anvil deploy until testnet is ready.
-- **P3 → P1:** pure, tested libraries: `crypto.py`, `watermark.py`, `leak.py`, which provides `best_match(text, candidates) → (wallet, score_bps)`, and `storage.py`, the 0G Storage upload and download wrapper. P1 wires them in; P3 never edits `agents/*` or `lore-mcp/`.
+- **P3 → P1:** pure, tested libraries: `crypto.py`, `watermark.py`, `leak.py`, which provides `best_match(text, candidates) → (wallet, ref, score_bps)` (section C), and `storage.py`, the 0G Storage upload and download wrapper. P1 wires them in; P3 never edits `agents/*` or `lore-mcp/`.
 - **P3 → everyone:** spike findings. They pin down how we call 0G Compute and 0G Storage from Python.
 - **Section 3 (frozen interfaces):** a change needs approval from all three.
 
@@ -358,20 +358,30 @@ World ID questions (same spike, same evidence rules):
 ### C — Content: crypto, watermarking, leak tracing, storage · libraries: P3, wiring into the gateway: P1
 1. **(P3)** `crypto.py`: `encrypt_node`, `decrypt_node`, `content_hash`. Include a round-trip test.
 2. **(P3)** `watermark.py`, watermark v1. It is deterministic, so no per-delivery seed needs to be stored.
-   - The only marking is zero-width characters. The first 8 bytes of `HMAC(WM_SECRET, wallet || nodeId)` are encoded as zero-width characters and repeated after every sentence end, so a partial excerpt can still be matched. The visible text is unchanged.
-   - `watermark(text, wallet, node_id)` and `score(leaked_text, wallet, node_id) → 0..10000`, where the score is the fraction of decoded bits that match.
+   - The only marking is zero-width characters. The first 8 bytes of `HMAC(WM_SECRET, wallet || ref)` are encoded as zero-width characters and repeated after every sentence end, so a partial excerpt can still be matched. The visible text is unchanged.
+   - `ref` is `node:<nodeId>` for a buyer's node copy or `sub:<subId>` for a voter's submission copy. IDs are canonical positive decimal uint256 values (no leading zeroes). The HMAC input is the wallet's 20 raw bytes followed by the UTF-8 ref; `node:5` and `sub:5` must produce different marks even for the same wallet and text.
+   - `watermark(text, wallet, ref)` and `score(leaked_text, wallet, ref) → 0..10000`, where the score is the fraction of decoded bits that match. HMAC truncation, zero-width bit encoding and framing stay unchanged.
+   - Also mark nonempty prose line endings so Markdown bullet excerpts are covered, and recognize Chinese sentence punctuation without following spaces. Leave Markdown inline code and fenced code untouched; code-only excerpts are not traceable by this scheme.
+   - `validate_plaintext(text)` rejects reserved watermark characters (U+200B, U+200C, U+2063) and text that cannot encode as UTF-8. `watermark` calls it too. Reject rather than stripping characters from hashed research or stacking old marks.
    - Tests:
      - Two different wallets produce different output.
      - The same wallet always produces the same output.
      - The visible text is identical to the input.
      - A 3-sentence excerpt still scores highest for the correct wallet.
+     - The same wallet and text have different output for `sub:5` and `node:5`.
+     - A 3-sentence vote-task excerpt is traced to the correct `(wallet, sub:<id>)` among at least 50 decoy wallets with mixed buyer/node and voter/submission refs.
+     - Markdown bullets and Chinese prose remain traceable; inline/fenced code is preserved; already-marked text and lone surrogates are rejected.
    - Known limitation: stripping zero-width characters removes the mark. That is accepted for v1; stronger watermarks are v2.
-3. **(P3)** `leak.py`: `best_match(text, candidates)`, which returns the highest-scoring wallet using `score()`. Test it with a planted leak and at least 50 decoy wallets.
+3. **(P3)** `leak.py`: `best_match(text, candidates)` takes `(wallet, ref)` pairs and returns `(wallet, ref, score_bps)` for the highest-scoring delivery using `score()`, **only among candidates with at least one exact complete HMAC mark in the excerpt**. With no exact candidate mark, return `(None, None, 0)`; similarity alone must never name a wallet. Scores still measure all decoded bits, allowing mixed-node excerpts without an arbitrary score threshold. Equal scores break lexicographically by `(normalized_wallet, ref)`; a score or tie is not proof of attribution. Test at least 50 decoy wallets, 1,000 fabricated marks, an out-of-candidate real mark and mixed-node leaks.
 4. **(P3)** `storage.py`: `upload(bytes) → root` and `download(root) → bytes`, using the route spike S picked.
 5. **(P1)** The gateway's content endpoints: `/ingest`, `/topics/{id}/content`, `/vote-tasks/{subId}`, `/internal/*`, and the leak lookup.
    - Every call checks access, eligibility or role on-chain at request time. Do not cache those checks.
-   - The leak lookup runs when `LeakReported` is indexed. It calls `best_match` against every wallet that bought the topic, then calls `recordMatch` with the result.
-6. **(P1)** Record each `(wallet, topicId)` delivery. That list is the candidate set for the leak lookup.
+   - `/ingest` calls `validate_plaintext` before encrypting/uploading and returns a client error for invalid input. The library's delivery-time validation is a second guard, not a replacement for ingest validation.
+   - `/topics/{id}/content` watermarks each node with `node:<id>` after the access check. `/vote-tasks/{subId}` watermarks only `text` with `sub:<subId>` after the eligibility check; `report`, `receipts` and `parents_meta` are unchanged. `/internal/*` stays unwatermarked and role-protected.
+   - The leak lookup runs when `LeakReported` is indexed. It uses every logged `(wallet, ref)` for that topic, including voters who never bought it, calls `best_match`, then calls `recordMatch(reportId, wallet, score_bps)`. The matched ref remains off-chain; no contract or section 3 API change is needed.
+   - Handle `(None, None, 0)` explicitly as unmatched; never substitute a wallet or pass `None` into a contract call. P1/P2 must agree whether an unmatched report stays pending or uses an existing supported zero-address sentinel.
+   - Tests: vote-task copies differ by wallet but preserve visible text; ineligible wallets are still refused; a voter fetches a task, the submission is accepted, and a later 3-sentence leak matches the voter even with buyer copies present. Also retain tracing for rejected submissions.
+6. **(P1)** Record every user plaintext delivery as `(wallet, topic_id, ref)`: one row per node returned by `/topics/{id}/content`, or one submission row from `/vote-tasks/{subId}`. Duplicate rows are idempotent. Keep submission delivery refs after acceptance or rejection; do not rewrite them as node refs. This delivery log is the candidate set for the leak lookup.
 
 **Done when** the endpoints pass integration tests against the testnet contracts and a planted leak is traced back to the correct wallet.
 

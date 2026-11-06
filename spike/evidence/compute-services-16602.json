@@ -1,0 +1,95 @@
+{
+  "chain_id": 16602,
+  "contract": "0xa79F4c8311FF93C06b8CfB403690cc987c93F91E",
+  "service_count": 8,
+  "services": [
+    {
+      "provider": "0xC93C82C292444bbb1ED4C3209f7CEc9633473Cc4",
+      "model": "openai/whisper-large-v3",
+      "type": "speech-to-text",
+      "url": "https://compute-network-dev-101.integratenetwork.work",
+      "verifiability": "TeeML",
+      "tee_signer": "0x63aa979A5c0344966a81Bb75f164986c77385380",
+      "signer_acknowledged": false,
+      "target_separated": null,
+      "expected_signer": "0x63aa979A5c0344966a81Bb75f164986c77385380"
+    },
+    {
+      "provider": "0x8e60d466FD16798Bec4868aa4CE38586D5590049",
+      "model": "openai/gpt-oss-20b",
+      "type": "chatbot",
+      "url": "https://compute-network-7.integratenetwork.work",
+      "verifiability": "TeeML",
+      "tee_signer": "0x29E6155bf52e792Ae230b0492C4E37269CeECc19",
+      "signer_acknowledged": false,
+      "target_separated": null,
+      "expected_signer": "0x29E6155bf52e792Ae230b0492C4E37269CeECc19"
+    },
+    {
+      "provider": "0x69Eb5a0BD7d0f4bF39eD5CE9Bd3376c61863aE08",
+      "model": "google/gemma-3-27b-it",
+      "type": "chatbot",
+      "url": "https://compute-network-8.integratenetwork.work",
+      "verifiability": "TeeML",
+      "tee_signer": "0xBb75171b2315C4c2694832A36d009237B0588BB1",
+      "signer_acknowledged": false,
+      "target_separated": null,
+      "expected_signer": "0xBb75171b2315C4c2694832A36d009237B0588BB1"
+    },
+    {
+      "provider": "0x1cE3f41AC3F9BcAB2c5EacB30EBC996617B7e6dF",
+      "model": "z-image-turbo",
+      "type": "text-to-image",
+      "url": "https://compute-network-dev-100.integratenetwork.work",
+      "verifiability": "TeeML",
+      "tee_signer": "0x63aa979A5c0344966a81Bb75f164986c77385380",
+      "signer_acknowledged": false,
+      "target_separated": null,
+      "expected_signer": "0x63aa979A5c0344966a81Bb75f164986c77385380"
+    },
+    {
+      "provider": "0x87a13337F0d4B2b08cce9189DBE9555690828ed4",
+      "model": "Qwen2.5-0.5B-Instruct",
+      "type": "chatbot",
+      "url": "https://cc05c4570b455b7e5f085906f2f5e51e2b5ca431-3081.dstack-pha-in2.phala.network",
+      "verifiability": "",
+      "tee_signer": "0xb8De179055f6286eeE17F3791FC23355188f5dF0",
+      "signer_acknowledged": false,
+      "target_separated": null,
+      "expected_signer": "0xb8De179055f6286eeE17F3791FC23355188f5dF0"
+    },
+    {
+      "provider": "0xA02b95Aa6886b1116C4f334eDe00381511E31A09",
+      "model": "Qwen2.5-0.5B-Instruct",
+      "type": "chatbot",
+      "url": "https://cc05c4570b455b7e5f085906f2f5e51e2b5ca431-3083.dstack-pha-in2.phala.network",
+      "verifiability": "",
+      "tee_signer": "0xb8De179055f6286eeE17F3791FC23355188f5dF0",
+      "signer_acknowledged": false,
+      "target_separated": null,
+      "expected_signer": "0xb8De179055f6286eeE17F3791FC23355188f5dF0"
+    },
+    {
+      "provider": "0x1cB95Eb66Cc67C62d4DE0CC96726C5A5d82e7C85",
+      "model": "glm-5.3",
+      "type": "chatbot",
+      "url": "https://compute-network-rdv2-b300.integratenetwork.work",
+      "verifiability": "TeeML",
+      "tee_signer": "0x21d061E6F73e9f57e55D4856c3a975f59362aaf8",
+      "signer_acknowledged": true,
+      "target_separated": null,
+      "expected_signer": "0x21d061E6F73e9f57e55D4856c3a975f59362aaf8"
+    },
+    {
+      "provider": "0xd6269e257761705B9e442E59794703762DFcC940",
+      "model": "qwen/qwen3.8-omni-flash",
+      "type": "chatbot",
+      "url": "https://compute-network-6.integratenetwork.work",
+      "verifiability": "TeeML",
+      "tee_signer": "0x6e1467340F9df9A314C4534461e0754FA38b872f",
+      "signer_acknowledged": true,
+      "target_separated": null,
+      "expected_signer": "0x6e1467340F9df9A314C4534461e0754FA38b872f"
+    }
+  ]
+}

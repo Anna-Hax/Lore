@@ -1,0 +1,24 @@
+{
+  "status": "passed",
+  "live_check_passed": true,
+  "chain_id": 16602,
+  "block": 64161555,
+  "deploy_block": 64141175,
+  "contracts_with_code": [
+    "Access",
+    "LoreRoles",
+    "Reports",
+    "Royalties",
+    "Submissions",
+    "TopicGraph",
+    "USDC"
+  ],
+  "wiring_checked": 8,
+  "voting_window": 86400,
+  "stake": 10000000,
+  "stake_fee": 500000,
+  "topic_price": 5000000,
+  "topic_count": 1,
+  "submission_count": 2,
+  "treasury": "0x338013B3F7c87Dc06Fc79B1cB3AEcb6941AE64e8"
+}
