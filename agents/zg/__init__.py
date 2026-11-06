@@ -21,6 +21,7 @@ ROUTER = "https://router-api.0g.ai/v1"
 # signs hashes of the encrypted request and response instead of the plaintext output.
 E2EE_SIGNED = re.compile(r"zg-sig-v1/e2ee-ct:[0-9a-f]{64}:[0-9a-f]{64}")
 PRIVATE_HEADERS = {"X-0G-Provider-Trust-Mode": "private"}
+SIGNATURE_FRESH_SECONDS = 600
 
 # provider address -> (provider base url, TEE signer address from its on-chain Service record).
 # ponytail: injected because the Service contract/method is pinned down by spike S (q2).
@@ -87,8 +88,11 @@ def call(
     body = {"model": model, "messages": messages, "temperature": 0, "verify_tee": True}
     request_hash = _hash(body)
     paid = cache.get(request_hash) if cache else None
-    if paid is None:
+    # Providers keep signatures for 15-30 min (spike S3): an older paid response can no longer be verified, so it is
+    # paid for again rather than retried against a signature that is gone.
+    if paid is None or time.time() - paid.get("paid_at", 0) > SIGNATURE_FRESH_SECONDS:
         paid = _pay(http, body, api_key, retries, sleep)
+        paid["paid_at"] = time.time()
         if cache:
             cache.put(request_hash, paid)
     if paid["tee_verified"] is False:  # the Router omits the field today; only an explicit False is a verdict

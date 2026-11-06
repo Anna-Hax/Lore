@@ -152,3 +152,18 @@ def test_rate_limit_backs_off_and_then_raises_unavailable_not_a_paid_failure():
         return httpx.Response(429, json={"error": "rate limited"})
     with pytest.raises(zg.ZGUnavailable):
         run(httpx.Client(transport=httpx.MockTransport(handler)))
+
+
+def test_a_cached_response_older_than_its_signature_window_is_paid_again(monkeypatch):
+    seen, cache = [], {}
+
+    class Cache:
+        get = staticmethod(cache.get)
+        put = staticmethod(cache.__setitem__)
+
+    http = fake_network(seen=seen)
+    run(http, cache=Cache)
+    (key,) = cache
+    cache[key]["paid_at"] -= zg.SIGNATURE_FRESH_SECONDS + 1  # the provider has dropped that signature by now
+    run(http, cache=Cache)
+    assert len([q for q in seen if q.url.path.endswith("/chat/completions")]) == 2
