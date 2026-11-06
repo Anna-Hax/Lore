@@ -182,3 +182,14 @@ def test_callback_state_is_single_use(env):
 def test_login_goes_to_world_idp_and_never_offers_demo(env):
     with env.client as c:
         assert c.post("/login/demo?pending=x", json={"name": "a"}).status_code == 404
+
+
+def test_any_account_mode_names_no_credential_class_and_records_what_came_back(env):
+    fake = FakeIdP(env.clock)
+    any_idp = WorldIdP(ISS, CLIENT, SECRET, "https://lore.test/login/callback", accept_acr=None, now=lambda: env.clock["t"],
+                       http=httpx.Client(transport=httpx.MockTransport(fake.handler)), jwks_client=Jwks())
+    url, attempt = any_idp.authorize_url(fresh=True)
+    assert "claims" not in parse_qs(urlparse(url).query)
+    fake.next = {"acr": "https://world.org/oidc/acr/device"}
+    claims = any_idp.finish(attempt, fake.approve(url), fresh=True)
+    assert claims["acr"].endswith("/device")

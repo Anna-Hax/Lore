@@ -27,7 +27,7 @@ from gateway.turnkey import Turnkey
 from zg.providers import Providers
 from gateway.db import bind_deployment, connect
 from gateway.worldid import WorldID
-from gateway.worldidp import WorldIdP
+from gateway.worldidp import ACCEPTED_ACR, WorldIdP
 
 
 def self_signed(folder: Path) -> tuple[str, str]:
@@ -89,7 +89,8 @@ def main():
     approve_base = e.get("LORE_APPROVE_URL") or (f"https://localhost:{tls_port}" if tls_port else e["LORE_PUBLIC_URL"])
     if e.get("WORLD_IDP_CLIENT_ID"):  # World ID Agent Pass: login + human checkpoints
         idp = WorldIdP(e.get("WORLD_IDP_ISSUER", "https://auth.world.org"), e["WORLD_IDP_CLIENT_ID"],
-                       e["WORLD_IDP_CLIENT_SECRET"], approve_base.rstrip("/") + "/login/callback")
+                       e["WORLD_IDP_CLIENT_SECRET"], approve_base.rstrip("/") + "/login/callback",
+                       accept_acr=None if e.get("WORLD_IDP_ACR") == "any" else ACCEPTED_ACR)
     app = create_app(db_path, chain, content, storage, world=world, service_token=e["LORE_SERVICE_TOKEN"],
                      public_url=e["LORE_PUBLIC_URL"], provider_signer=lambda p: providers(p)[1], turnkey=turnkey,
                      demo_login=e.get("LORE_DEMO_LOGIN") == "1", site_dir=site_dir, chain_info=chain_info,

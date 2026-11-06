@@ -39,7 +39,11 @@ def person_of(iss: str, sub: str) -> str:
 
 class WorldIdP:
     def __init__(self, issuer: str, client_id: str, client_secret: str, redirect_uri: str,
-                 http: httpx.Client | None = None, now=time.time, jwks_client=None):
+                 http: httpx.Client | None = None, now=time.time, jwks_client=None,
+                 accept_acr: tuple[str, ...] | None = ACCEPTED_ACR):
+        """accept_acr: credential classes to require (default Orb); None accepts any World ID account (the
+        request then names no class, so the client's portal default applies) and only records the acr."""
+        self.accept_acr = accept_acr
         self.issuer, self.client_id, self.client_secret = issuer.rstrip("/"), client_id, client_secret
         self.redirect_uri, self.now = redirect_uri, now
         self.http = http or httpx.Client(timeout=30)
@@ -72,9 +76,10 @@ class WorldIdP:
             "response_type": "code", "client_id": self.client_id, "redirect_uri": self.redirect_uri,
             "scope": "openid", "state": state, "nonce": nonce,
             "code_challenge": challenge, "code_challenge_method": "S256",
-            "claims": json.dumps({"id_token": {"acr": {"essential": True, "values": list(ACCEPTED_ACR)}}},
-                                 separators=(",", ":")),
         }
+        if self.accept_acr:
+            params["claims"] = json.dumps({"id_token": {"acr": {"essential": True, "values": list(self.accept_acr)}}},
+                                          separators=(",", ":"))
         if fresh:  # a human checkpoint: always a new authentication, never a remembered session
             params.update(max_age="0", prompt="login")
         url = f"{self.meta()['authorization_endpoint']}?{urlencode(params)}"
@@ -110,7 +115,7 @@ class WorldIdP:
             raise WorldIdPError(f"invalid ID token: {e}") from e
         if claims.get("nonce") != attempt["nonce"]:
             raise WorldIdPError("ID token nonce does not match this attempt")
-        if claims.get("acr") not in ACCEPTED_ACR:
+        if self.accept_acr and claims.get("acr") not in self.accept_acr:
             raise WorldIdPError(f"credential class not accepted: {claims.get('acr')!r}")
         if fresh:  # max_age=0: the authentication must have happened during THIS attempt
             auth_time = claims.get("auth_time")
