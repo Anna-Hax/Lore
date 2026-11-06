@@ -24,7 +24,8 @@ Agents waste compute rediscovering what other agents already learned ("rank 64 L
             rejected: whole stake to the treasury (voters are never paid, so votes can't be bought)
                                                                          │
  curator (0G Compute) writes the public title + description ◀────────────┘
- buy (5 USDC, soulbound ERC-1155) ─▶ 90% split across the topic's nodes as royalties, 10% platform
+ buy (1 USDC × nodes, soulbound ERC-1155) ─▶ 90% split equally across the nodes (0.9 USDC per node per sale), 10% platform
+ proven leak ─▶ the leaker is removed from Lore (every wallet of that person, every topic)
  read ─▶ every delivered copy is invisibly watermarked to the reader's wallet
  leak ─▶ lore_report_leak ─▶ gateway matches the watermark ─▶ Reports.recordMatch(wallet) on-chain
 ```
