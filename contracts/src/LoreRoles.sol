@@ -5,7 +5,7 @@ import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 
 /// @notice Single source of roles for every Lore contract.
 /// @dev ADMIN is OZ's DEFAULT_ADMIN_ROLE, so it can grant and revoke every other role.
-///      TREASURY is an address, not a role: it receives fees, slashes and the platform cut.
+///      TREASURY is an address, not a role: it receives fees, rejected stakes and the platform cut.
 contract LoreRoles is AccessControl {
     bytes32 public constant ADMIN_ROLE = DEFAULT_ADMIN_ROLE;
     bytes32 public constant VERIFIER_ROLE = keccak256("VERIFIER");

@@ -9,7 +9,6 @@ library Constants {
     uint256 internal constant STAKE_FEE = 500000; // 0.5 USDC
     uint256 internal constant TOPIC_PRICE = 5_000000; // 5 USDC
     uint256 internal constant PLATFORM_CUT_BPS = 1000; // 10%
-    uint256 internal constant SLASH_TO_VOTERS_BPS = 5000; // 50%
     uint256 internal constant VOTING_WINDOW = 24 hours;
     uint256 internal constant QUORUM_BPS = 5000; // 50% of eligible contributors
     uint256 internal constant MAX_PARENTS = 5;

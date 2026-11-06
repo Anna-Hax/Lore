@@ -28,7 +28,6 @@ contract Submissions is ISubmissions, LoreBase {
         uint256 fee; // snapshot at submit time
         bytes32 reportHash;
         uint256 nodeId; // set on accept
-        uint256 slashPerVoter; // set on reject
         uint256[] parents;
     }
 
@@ -42,7 +41,6 @@ contract Submissions is ISubmissions, LoreBase {
 
     uint256 public stake = Constants.STAKE;
     uint256 public stakeFee = Constants.STAKE_FEE;
-    uint256 public slashToVotersBps = Constants.SLASH_TO_VOTERS_BPS;
     uint256 public votingWindow = Constants.VOTING_WINDOW;
     uint256 public quorumBps = Constants.QUORUM_BPS;
 
@@ -50,10 +48,8 @@ contract Submissions is ISubmissions, LoreBase {
     mapping(uint256 => Submission) private _subs;
     mapping(bytes32 => bool) public contentHashUsed;
     mapping(uint256 => mapping(address => uint8)) public voteOf;
-    mapping(uint256 => mapping(address => bool)) public slashClaimed;
 
-    event ParamsSet(uint256 stake, uint256 stakeFee, uint256 slashToVotersBps, uint256 votingWindow, uint256 quorumBps);
-    event SlashClaimed(uint256 indexed subId, address indexed voter, uint256 amount);
+    event ParamsSet(uint256 stake, uint256 stakeFee, uint256 votingWindow, uint256 quorumBps);
 
     error UnknownTopic(uint256 topicId);
     error UnknownSubmission(uint256 subId);
@@ -65,7 +61,6 @@ contract Submissions is ISubmissions, LoreBase {
     error AlreadyVoted();
     error SubmitterCannotVote();
     error NotFinalizable();
-    error NothingToClaim();
 
     constructor(LoreRoles roles_, IERC20 usdc_, TopicGraph graph_) LoreBase(roles_) {
         if (address(usdc_) == address(0) || address(graph_) == address(0)) revert ZeroAddress();
@@ -80,20 +75,18 @@ contract Submissions is ISubmissions, LoreBase {
     function setParams(
         uint256 stake_,
         uint256 stakeFee_,
-        uint256 slashToVotersBps_,
         uint256 votingWindow_,
         uint256 quorumBps_
     ) external onlyAdmin {
         if (
-            stakeFee_ > stake_ || slashToVotersBps_ > Constants.BPS || votingWindow_ == 0 || quorumBps_ < 5000
+            stakeFee_ > stake_ || votingWindow_ == 0 || quorumBps_ < 5000
                 || quorumBps_ > Constants.BPS
         ) revert InvalidParam();
         stake = stake_;
         stakeFee = stakeFee_;
-        slashToVotersBps = slashToVotersBps_;
         votingWindow = votingWindow_;
         quorumBps = quorumBps_;
-        emit ParamsSet(stake_, stakeFee_, slashToVotersBps_, votingWindow_, quorumBps_);
+        emit ParamsSet(stake_, stakeFee_, votingWindow_, quorumBps_);
     }
 
     // ---------- flow ----------
@@ -167,29 +160,10 @@ contract Submissions is ISubmissions, LoreBase {
             emit Finalized(subId, true, nodeId);
         } else {
             s.status = Status.Rejected;
-            // Rejected => the winning side voted no.
-            uint256 winners = s.no;
-            uint256 toTreasury = s.stake;
-            if (winners > 0) {
-                uint256 perVoter = (s.stake * slashToVotersBps / Constants.BPS) / winners;
-                s.slashPerVoter = perVoter;
-                toTreasury -= perVoter * winners; // treasury share + rounding dust
-            }
-            if (toTreasury > 0) usdc.safeTransfer(treasury, toTreasury);
+            // The whole stake goes to the platform. Voters are never paid, so no vote is bought.
+            if (s.stake > 0) usdc.safeTransfer(treasury, s.stake);
             emit Finalized(subId, false, 0);
         }
-    }
-
-    /// @notice A voter on the winning (no) side of a rejected submission pulls their share of the slash.
-    function claimSlash(uint256 subId) external {
-        Submission storage s = _get(subId);
-        if (s.status != Status.Rejected) revert WrongStatus(s.status);
-        if (voteOf[subId][msg.sender] != VOTE_NO || slashClaimed[subId][msg.sender]) revert NothingToClaim();
-        uint256 amount = s.slashPerVoter;
-        if (amount == 0) revert NothingToClaim();
-        slashClaimed[subId][msg.sender] = true;
-        usdc.safeTransfer(msg.sender, amount);
-        emit SlashClaimed(subId, msg.sender, amount);
     }
 
     // ---------- views (for the gateway, so its checks mirror the contract exactly) ----------
