@@ -140,9 +140,9 @@ def build_mcp(service, oauth, public_url: str) -> MCPServer:
     def lore_buy(topic_id: int, wallet: str = "", confirm: bool = False) -> dict:
         """Buy permanent access to a whole topic, including future nodes. Pays USDC from your wallet."""
         if not confirm:
-            return {"confirm": f"This costs {service.chain.topic_price() / 1e6:g} USDC for permanent access to topic"
+            return {"confirm": f"This costs {service.chain.topic_price(topic_id) / 1e6:g} USDC for permanent access to topic"
                                f" {topic_id}. Call again with confirm=true."}
-        return service.checkpoint(person(), f"pay {service.chain.topic_price() / 1e6:g} USDC for topic {topic_id}",
+        return service.checkpoint(person(), f"pay {service.chain.topic_price(topic_id) / 1e6:g} USDC for topic {topic_id}",
                                   service.prepare_buy(person(), topic_id, wallet or None))
 
     @tool

@@ -549,3 +549,14 @@ def test_paying_tools_send_their_transactions_through_the_signer(env):
     out = env.svc.send(env.svc.prepare_buy(person(ALICE), 1))
     assert out["tx_hashes"] == ["0xhash0", "0xhash1"] and "transactions" not in out
     assert [t["description"] for t in env.svc.signer.txs] == ["USDC.approve", "Access.buy"]
+
+
+def test_a_banned_person_cannot_start_a_submission_or_purchase(env):
+    env.chain.banned = {ALICE.address.lower()}
+    try:
+        with pytest.raises(LoreError, match="removed from Lore"):
+            env.svc.prepare_submit(person(ALICE), "x" * 600, 0)
+        with pytest.raises(LoreError, match="removed from Lore"):
+            env.svc.prepare_buy(person(ALICE), 1)
+    finally:
+        env.chain.banned = set()

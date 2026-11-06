@@ -25,6 +25,7 @@ from gateway.turnkey import RETRY_WINDOW_MS, lore_policies
 INGEST_TTL = 600  # an ingest must be submitted on-chain within 10 min, so it can't skip votes assigned later
 MAX_LAG = 60      # blocks (~30 s on 0G): refuse ingests while the indexer is behind, or the vote gate is blind
 NO_WALLET = "You don't have a wallet yet: create one with lore_create_wallet, then fund it with 0G (gas) and USDC."
+BANNED = "You were removed from Lore after a proven leak of paid research; you can't buy, read, submit or vote."
 POLICY_CALLS = {"USDC": ["approve"], "Submissions": ["submit", "vote"], "Access": ["buy"], "Royalties": ["claim"],
                 "Reports": ["report"]}  # everything Lore may sign from a user's wallet
 
@@ -231,11 +232,10 @@ class Service:
 
     # --- public catalogue ---
     def topics(self) -> list[dict]:
-        price = self.chain.topic_price()  # settable on-chain by ADMIN
         with self.tx() as conn:
             rows = conn.execute("SELECT t.id, t.meta_json, COUNT(n.id) AS n FROM topics t"
                                 " LEFT JOIN nodes n ON n.topic_id=t.id GROUP BY t.id ORDER BY t.id").fetchall()
-        return [{"topic_id": r["id"], "meta": meta(r["meta_json"]), "node_count": r["n"], "price": price} for r in rows]
+        return [{"topic_id": r["id"], "meta": meta(r["meta_json"]), "node_count": r["n"], "price": self.chain.topic_price(r["id"])} for r in rows]
 
     def topic(self, tid: int) -> dict:
         with self.tx() as conn:
@@ -243,7 +243,7 @@ class Service:
             if not t:
                 raise LoreError("no such topic")
             nodes = conn.execute("SELECT id, contributor, meta_json FROM nodes WHERE topic_id=? ORDER BY id", (tid,)).fetchall()
-            return {"topic_id": tid, "meta": meta(t["meta_json"]), "price": self.chain.topic_price(), "nodes": [{
+            return {"topic_id": tid, "meta": meta(t["meta_json"]), "price": self.chain.topic_price(tid), "nodes": [{
                 "node_id": n["id"], "contributor": n["contributor"], "meta": meta(n["meta_json"]),
                 "parents": [e[0] for e in conn.execute("SELECT parent FROM edges WHERE child=?", (n["id"],))],
             } for n in nodes]}
@@ -313,6 +313,8 @@ class Service:
             raise LoreError(str(e)) from e
         with self.tx() as conn:
             w = self._wallet(conn, person, wallet)
+            if self.chain.is_banned(w):
+                raise LoreError(BANNED)
             if self.chain.latest() - synced_block(conn) > MAX_LAG:
                 raise LoreError("Lore is catching up with the chain; try again in a few seconds")
             if self._vote_tasks(conn, person):  # vote-before-submit, per person
@@ -339,7 +341,9 @@ class Service:
     def prepare_buy(self, person: str, tid: int, wallet: str | None = None) -> dict:
         with self.tx() as conn:
             w = self._wallet(conn, person, wallet)
-        price = self.chain.topic_price()
+        if self.chain.is_banned(w):
+            raise LoreError(BANNED)
+        price = self.chain.topic_price(tid)  # nodeValue x nodes, live: approve exactly what buy() pulls
         return {"price": price, "transactions": [
             self.chain.prepare("USDC", "approve", w, self.chain.address("Access"), price),
             self.chain.prepare("Access", "buy", w, tid),
@@ -467,6 +471,7 @@ class Service:
         out_topics = [{"topic_id": t["id"], "title": m(t["meta_json"]).get("title"),
                        "description": m(t["meta_json"]).get("description"),
                        "node_count": sum(1 for n in nodes if n["topic_id"] == t["id"]), "buyers": bought.get(t["id"], 0),
+                       "price": params["node_value"] * sum(1 for n in nodes if n["topic_id"] == t["id"]),
                        "contributors": len(people_by_topic.get(t["id"], ())),
                        "proof": self.proof_summary(m(t["meta_json"]).get("receipt"))} for t in topics]
         out_nodes = [{"node_id": n["id"], "topic_id": n["topic_id"], "contributor": n["contributor"],
@@ -482,7 +487,8 @@ class Service:
         out_reports = [{"report_id": r["id"], "topic_id": r["topic_id"], "matched": r["matched_wallet"] is not None,
                         "matched_wallet": r["matched_wallet"], "score_bps": r["score_bps"]} for r in reports]
         purchases = sum(bought.values())
-        volume = purchases * params["topic_price"]
+        with self.tx() as conn:
+            volume = conn.execute("SELECT COALESCE(SUM(amount), 0) FROM sales").fetchone()[0]
         return {
             "generated_at": self.now(), "chain": chain_info, "params": params, "mcp_url": mcp_url,
             "stats": {"topics": len(topics), "nodes": len(nodes), "submissions": len(subs),

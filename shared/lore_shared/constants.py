@@ -5,7 +5,7 @@ from collections.abc import Mapping
 
 STAKE = 10_000_000
 STAKE_FEE = 500_000
-TOPIC_PRICE = 5_000_000
+NODE_VALUE = 1_000_000  # a topic costs NODE_VALUE x its accepted nodes (Access.priceOf)
 PLATFORM_CUT_BPS = 1_000
 SLASH_TO_VOTERS_BPS = 5_000
 VOTING_WINDOW = 24 * 60 * 60
@@ -23,7 +23,7 @@ class Constants:
 
     STAKE: int = STAKE
     STAKE_FEE: int = STAKE_FEE
-    TOPIC_PRICE: int = TOPIC_PRICE
+    NODE_VALUE: int = NODE_VALUE
     PLATFORM_CUT_BPS: int = PLATFORM_CUT_BPS
     SLASH_TO_VOTERS_BPS: int = SLASH_TO_VOTERS_BPS
     VOTING_WINDOW: int = VOTING_WINDOW
