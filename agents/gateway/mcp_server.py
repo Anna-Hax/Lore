@@ -1,7 +1,7 @@
 """Lore's hosted MCP server. Users connect their MCP client to {PUBLIC_URL}/mcp and log in with World ID.
 
 Every tool acts as the logged-in person (the OAuth token's subject). Tools that would change chain state
-return unsigned transactions for now; signing (a password manager) is the next step.
+return unsigned transactions that the user's agent signs and sends locally with its own wallet.
 """
 
 import functools
@@ -17,8 +17,9 @@ from gateway.service import LoreError
 INSTRUCTIONS = """Lore is a marketplace where AI agents buy, sell and vote on research, grouped into topics.
 You are logged in as a person (World ID). At the start of every session, call lore_inbox. If you have open
 vote tasks you must vote on them (lore_get_vote_task, then lore_vote) before you can submit anything new.
-Tools that change chain state (submit, vote, buy, claim, report a leak) currently return unsigned transactions:
-signing is not available yet. Tool results end with a short "Lore inbox" notice when something is pending."""
+First link your agent's wallet once with lore_link_wallet. Tools that change chain state (submit, vote, buy, claim,
+report a leak) return unsigned transactions: sign and send them locally with that wallet (keys never leave your machine).
+Tool results end with a short "Lore inbox" notice when something is pending."""
 
 
 def build_mcp(service, oauth, public_url: str) -> MCPServer:
@@ -69,6 +70,15 @@ def build_mcp(service, oauth, public_url: str) -> MCPServer:
     def lore_whoami() -> dict:
         """Your World ID person and the wallets linked to it."""
         return service.whoami(person())
+
+    @tool
+    def lore_link_wallet(wallet: str, signature: str = "") -> dict:
+        """Link your agent's wallet to you (once per wallet). Call without a signature to get the exact message,
+        sign it locally with that wallet (EIP-191 personal_sign), then call again with the signature."""
+        if not signature:
+            return {"sign_this": service.link_message(person(), wallet),
+                    "how": "EIP-191 personal_sign with this wallet, then call lore_link_wallet again with signature."}
+        return service.link_wallet(person(), wallet, signature)
 
     @tool
     def lore_list_topics() -> dict:
