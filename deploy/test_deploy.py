@@ -2,6 +2,7 @@ import os
 import importlib.util
 import json
 from pathlib import Path
+import re
 import sqlite3
 from types import SimpleNamespace
 
@@ -148,12 +149,13 @@ def test_attest_publishes_nothing_when_the_cli_fails(monkeypatch):
 
 def test_role_check_reports_missing_roles_and_gas():
     class Reader:
-        web3 = SimpleNamespace(eth=SimpleNamespace(get_balance=lambda address: 0 if address == "0xb" else 1))
+        web3 = SimpleNamespace(eth=SimpleNamespace(get_balance=lambda address: {"0xb": 0}.get(address, 1) if address.startswith("0x") else 1 / 0))
 
         def call(self, contract, method, *args):
             return args[1] != "0xc" if method == "hasRole" else method
 
-    good = check_roles.check(Reader(), {"gateway": "0xa", "verifier": "0xa", "curator": "0xa"})
+    good = check_roles.check(Reader(), {"gateway": "0xa", "verifier": "0xa", "curator": "0xa",
+                                       "turnkey_delegated_public_key": "03ab"})  # as create_secrets writes it
     assert good["ready"] is True
     bad = check_roles.check(Reader(), {"gateway": "0xa", "verifier": "0xb", "curator": "0xc"})
     assert bad["ready"] is False and bad["roles"]["curator"] is False and bad["funded"]["verifier"] is False
@@ -169,3 +171,8 @@ def test_role_check_ignores_non_wallet_entries_like_the_turnkey_public_key():
     report = check_roles.check(Reader(), {"gateway": "0xa", "verifier": "0xb", "curator": "0xc",
                                           "turnkey_delegated_public_key": "02" + "ab" * 32})
     assert report["ready"] is True and "turnkey_delegated_public_key" not in report["funded"]
+def test_docker_builds_the_same_storage_cli_revision_as_build_py():
+    dockerfile = (HERE / "Dockerfile").read_text()
+    build = (HERE.parent / "shared" / "storage_cli" / "build.py").read_text()
+    revision = re.search(r'REVISION = "([0-9a-f]{40})"', build).group(1)
+    assert f"ARG STORAGE_CLI_REVISION={revision}\n" in dockerfile

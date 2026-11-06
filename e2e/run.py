@@ -389,8 +389,11 @@ async def main_async(check_only: bool, resume: bool = False) -> None:
     async with AsyncExitStack() as stack:
         agents = {}
         for name in PEOPLE:
-            # local mode logs in as separate demo people, so nobody has both a Turnkey and a self-held wallet
-            token = await asyncio.to_thread(login, gateway, f"{name}-local" if local else name)
+            # One demo person per run and name (P1): a person who already has a wallet linked (an earlier run on this
+            # deployment) would get a second one, and tools would then ask which wallet to use. Local mode adds its own
+            # suffix, so nobody has both a Turnkey and a self-held wallet.
+            who = f"{name}-{tag}" if tag else name
+            token = await asyncio.to_thread(login, gateway, f"{who}-local" if local else who)
             http = await stack.enter_async_context(httpx2.AsyncClient(headers={"Authorization": f"Bearer {token}"},
                                                                      timeout=httpx2.Timeout(300)))
             streams = await stack.enter_async_context(streamable_http_client(f"{gateway}/mcp", http_client=http))

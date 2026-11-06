@@ -26,8 +26,11 @@ services:
       LORE_STORAGE_CLI: /usr/local/bin/lore-storage-client
       # The hosted MCP server and its World ID login (agents/gateway/worldid.py). Not secrets.
       LORE_PUBLIC_URL: ${LORE_PUBLIC_URL:?Set the public https URL users reach the MCP server at}
-      WORLD_APP_ID: ${WORLD_APP_ID:?Set from the World Developer Portal}
-      WORLD_RP_ID: ${WORLD_RP_ID:?Set from the World Developer Portal}
+      # Leave WORLD_APP_ID empty and set LORE_DEMO_LOGIN=1 for the labelled name-based demo login (testnet only:
+      # anyone who types a name is that person). The gateway ignores LORE_DEMO_LOGIN whenever WORLD_APP_ID is set.
+      WORLD_APP_ID: ${WORLD_APP_ID:-}
+      WORLD_RP_ID: ${WORLD_RP_ID:-}
+      LORE_DEMO_LOGIN: ${LORE_DEMO_LOGIN:-0}
       WORLD_ACTION: ${WORLD_ACTION:-lore-person}
       WORLD_IDKIT_MODULE: ${WORLD_IDKIT_MODULE:-https://cdn.jsdelivr.net/npm/@worldcoin/idkit-core@4.6.0/+esm}
       # Users' wallets on Turnkey with Lore's delegated access (agents/gateway/turnkey.py). Public, not secrets.

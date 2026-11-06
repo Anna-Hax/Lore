@@ -167,7 +167,7 @@ class Service:
                     if (self.chain.person_of(address) or "").lower() != person.lower():  # not a lost race: real failure
                         raise LoreError(f"linking your wallet to your World ID failed ({e}); call lore_create_wallet"
                                         " again") from e
-            with self.tx() as conn:  # the indexer records it too; this makes it visible to lore_whoami right away
+            with self.tx() as conn:  # the indexer records it too; this makes the wallet usable right away
                 conn.execute("INSERT OR IGNORE INTO persons VALUES (?, ?)", (address, person.lower()))
         return {"address": address, "next": "fund it with 0G (gas) and USDC, then you can buy, submit and vote. Lore"
                 " can spend this wallet on Lore actions, so keep only what you mean to spend here"}

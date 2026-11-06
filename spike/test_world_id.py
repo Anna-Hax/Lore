@@ -21,7 +21,7 @@ from gateway.app import LOGIN_PAGE  # noqa: E402
 from gateway.worldid import WorldID, WorldIDError, signal_hash  # noqa: E402
 from world_rp import hash_signal, rp_context, rp_message, rp_signature  # noqa: E402
 
-SDK = json.loads((SPIKE / "evidence" / "world-idkit-4.6.0.json").read_text())
+SDK = json.loads((SPIKE / "evidence" / "world-idkit-4.6.0.json").read_text(encoding="utf-8"))
 KEY = "0x" + keccak(text="lore world spike throwaway key, never funded or registered").hex()
 SIGNAL = "0a1b2c3d4e5f60718293a4b5c6d7e8f9"
 RP_ID = "rp_00000000000000ab"
@@ -102,17 +102,14 @@ def test_idkit_refuses_the_login_pages_request_without_allow_legacy_proofs():
     assert SDK["page_exact_call"].startswith("allow_legacy_proofs is required")
 
 
-@gap("gateway/worldid.py rp_context raises NotImplementedError, so /login/request returns 503")
 def test_gateway_signs_rp_context():
     assert WorldID("app_x", RP_ID, "lore-person", signing_key=KEY, idkit_module="m").rp_context()["signature"]
 
 
-@gap("gateway/app.py omits allow_legacy_proofs, so IDKit.request throws on the button click")
 def test_login_page_sets_allow_legacy_proofs():
     assert "allow_legacy_proofs" in LOGIN_PAGE
 
 
-@gap("gateway/app.py posts pollUntilCompletion's {success, result} whole, so verify rejects every real proof")
 def test_login_page_unwraps_the_completion():
     assert "JSON.stringify(result)" not in LOGIN_PAGE or "const result = await request.pollUntilCompletion()" not in LOGIN_PAGE
 
