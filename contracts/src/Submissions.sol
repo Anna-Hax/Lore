@@ -1,0 +1,267 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.24;
+
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {ISubmissions} from "./interfaces/ILore.sol";
+import {LoreBase} from "./LoreBase.sol";
+import {LoreRoles} from "./LoreRoles.sol";
+import {TopicGraph} from "./TopicGraph.sol";
+import {Constants} from "./Constants.sol";
+
+/// @notice Staked submissions: verifier report, contributor vote, finalize. Rules from BUILD_PLAN.md section 3.2.
+contract Submissions is ISubmissions, LoreBase {
+    using SafeERC20 for IERC20;
+
+    struct Submission {
+        uint256 topicId; // 0 = new topic
+        address submitter;
+        bytes32 contentHash;
+        bytes32 storageRoot;
+        Status status;
+        bool pass; // verifier verdict
+        uint64 reportedAt;
+        uint32 yes;
+        uint32 no;
+        uint256 eligibleVoters; // contributorCount snapshot at report time
+        uint256 stake; // snapshot at submit time
+        uint256 fee; // snapshot at submit time
+        bytes32 reportHash;
+        uint256 nodeId; // set on accept
+        uint256 slashPerVoter; // set on reject
+        uint256[] parents;
+    }
+
+    /// @dev 0 = not voted, 1 = yes, 2 = no
+    uint8 internal constant VOTE_NONE = 0;
+    uint8 internal constant VOTE_YES = 1;
+    uint8 internal constant VOTE_NO = 2;
+
+    IERC20 public immutable usdc;
+    TopicGraph public immutable graph;
+
+    uint256 public stake = Constants.STAKE;
+    uint256 public stakeFee = Constants.STAKE_FEE;
+    uint256 public slashToVotersBps = Constants.SLASH_TO_VOTERS_BPS;
+    uint256 public votingWindow = Constants.VOTING_WINDOW;
+    uint256 public quorumBps = Constants.QUORUM_BPS;
+
+    uint256 public nextSubId = 1;
+    mapping(uint256 => Submission) private _subs;
+    mapping(bytes32 => bool) public contentHashUsed;
+    mapping(uint256 => mapping(address => uint8)) public voteOf;
+    mapping(uint256 => mapping(address => bool)) public slashClaimed;
+
+    event ParamsSet(uint256 stake, uint256 stakeFee, uint256 slashToVotersBps, uint256 votingWindow, uint256 quorumBps);
+    event SlashClaimed(uint256 indexed subId, address indexed voter, uint256 amount);
+
+    error UnknownTopic(uint256 topicId);
+    error UnknownSubmission(uint256 subId);
+    error DuplicateContent(bytes32 contentHash);
+    error WrongStatus(Status status);
+    error NewTopicNoVoting();
+    error VotingClosed();
+    error NotEligible();
+    error AlreadyVoted();
+    error SubmitterCannotVote();
+    error NotFinalizable();
+    error NothingToClaim();
+
+    constructor(LoreRoles roles_, IERC20 usdc_, TopicGraph graph_) LoreBase(roles_) {
+        if (address(usdc_) == address(0) || address(graph_) == address(0)) revert ZeroAddress();
+        usdc = usdc_;
+        graph = graph_;
+    }
+
+    // ---------- admin ----------
+
+    /// @notice quorumBps must be >= 50%: early finalize relies on "one side alone above quorum" meaning
+    ///         that side already holds a strict majority of every eligible voter, so the result can't change.
+    function setParams(
+        uint256 stake_,
+        uint256 stakeFee_,
+        uint256 slashToVotersBps_,
+        uint256 votingWindow_,
+        uint256 quorumBps_
+    ) external onlyAdmin {
+        if (
+            stakeFee_ > stake_ || slashToVotersBps_ > Constants.BPS || votingWindow_ == 0 || quorumBps_ < 5000
+                || quorumBps_ > Constants.BPS
+        ) revert InvalidParam();
+        stake = stake_;
+        stakeFee = stakeFee_;
+        slashToVotersBps = slashToVotersBps_;
+        votingWindow = votingWindow_;
+        quorumBps = quorumBps_;
+        emit ParamsSet(stake_, stakeFee_, slashToVotersBps_, votingWindow_, quorumBps_);
+    }
+
+    // ---------- flow ----------
+
+    /// @inheritdoc ISubmissions
+    function submit(uint256 topicId, bytes32 contentHash, bytes32 storageRoot) external returns (uint256 subId) {
+        if (topicId != 0 && !graph.topicExists(topicId)) revert UnknownTopic(topicId);
+        if (contentHashUsed[contentHash]) revert DuplicateContent(contentHash);
+        contentHashUsed[contentHash] = true;
+
+        subId = nextSubId++;
+        Submission storage s = _subs[subId];
+        s.topicId = topicId;
+        s.submitter = msg.sender;
+        s.contentHash = contentHash;
+        s.storageRoot = storageRoot;
+        s.stake = stake;
+        s.fee = stakeFee;
+
+        usdc.safeTransferFrom(msg.sender, address(this), s.stake);
+        emit Submitted(subId, topicId, msg.sender, contentHash, storageRoot);
+    }
+
+    /// @inheritdoc ISubmissions
+    /// @dev Parents are validated here (same rules as TopicGraph.addNode), so finalize can't revert on them later.
+    ///      A new-topic submission must report no parents.
+    function postReport(uint256 subId, bool pass, uint256[] calldata parents, bytes32 reportHash)
+        external
+        onlyRole(roles.VERIFIER_ROLE())
+    {
+        Submission storage s = _get(subId);
+        if (s.status != Status.Pending) revert WrongStatus(s.status);
+        graph.checkParents(s.topicId, parents);
+
+        s.status = Status.Reported;
+        s.pass = pass;
+        s.parents = parents;
+        s.reportHash = reportHash;
+        s.reportedAt = uint64(block.timestamp);
+        s.eligibleVoters = s.topicId == 0 ? 0 : graph.contributorCount(s.topicId);
+
+        emit Reported(subId, pass, parents, reportHash, s.eligibleVoters);
+    }
+
+    /// @inheritdoc ISubmissions
+    function vote(uint256 subId, bool approve) external {
+        Submission storage s = _get(subId);
+        _checkVote(s, subId, msg.sender);
+
+        voteOf[subId][msg.sender] = approve ? VOTE_YES : VOTE_NO;
+        if (approve) s.yes++;
+        else s.no++;
+        emit Voted(subId, msg.sender, approve);
+    }
+
+    /// @inheritdoc ISubmissions
+    function finalize(uint256 subId) external {
+        Submission storage s = _get(subId);
+        if (s.status != Status.Reported) revert WrongStatus(s.status);
+        if (!_finalizable(s)) revert NotFinalizable();
+
+        bool accepted = _outcome(s);
+        address treasury = _treasury();
+
+        if (accepted) {
+            s.status = Status.Accepted;
+            (, uint256 nodeId) = graph.addNode(s.topicId, s.submitter, s.contentHash, s.storageRoot, s.parents);
+            s.nodeId = nodeId;
+            if (s.stake - s.fee > 0) usdc.safeTransfer(s.submitter, s.stake - s.fee);
+            if (s.fee > 0) usdc.safeTransfer(treasury, s.fee);
+            emit Finalized(subId, true, nodeId);
+        } else {
+            s.status = Status.Rejected;
+            // Rejected => the winning side voted no.
+            uint256 winners = s.no;
+            uint256 toTreasury = s.stake;
+            if (winners > 0) {
+                uint256 perVoter = (s.stake * slashToVotersBps / Constants.BPS) / winners;
+                s.slashPerVoter = perVoter;
+                toTreasury -= perVoter * winners; // treasury share + rounding dust
+            }
+            if (toTreasury > 0) usdc.safeTransfer(treasury, toTreasury);
+            emit Finalized(subId, false, 0);
+        }
+    }
+
+    /// @notice A voter on the winning (no) side of a rejected submission pulls their share of the slash.
+    function claimSlash(uint256 subId) external {
+        Submission storage s = _get(subId);
+        if (s.status != Status.Rejected) revert WrongStatus(s.status);
+        if (voteOf[subId][msg.sender] != VOTE_NO || slashClaimed[subId][msg.sender]) revert NothingToClaim();
+        uint256 amount = s.slashPerVoter;
+        if (amount == 0) revert NothingToClaim();
+        slashClaimed[subId][msg.sender] = true;
+        usdc.safeTransfer(msg.sender, amount);
+        emit SlashClaimed(subId, msg.sender, amount);
+    }
+
+    // ---------- views (for the gateway, so its checks mirror the contract exactly) ----------
+
+    function getSubmission(uint256 subId) external view returns (Submission memory) {
+        return _get(subId);
+    }
+
+    function submissionCount() external view returns (uint256) {
+        return nextSubId - 1;
+    }
+
+    /// @notice True iff `voter` could call vote(subId, ...) right now.
+    function canVote(uint256 subId, address voter) external view returns (bool) {
+        if (subId == 0 || subId >= nextSubId) return false;
+        Submission storage s = _subs[subId];
+        if (s.status != Status.Reported || s.topicId == 0) return false;
+        if (block.timestamp >= uint256(s.reportedAt) + votingWindow) return false;
+        uint64 since = graph.contributorSince(s.topicId, voter);
+        if (since == 0 || since >= s.reportedAt) return false;
+        if (voteOf[subId][voter] != VOTE_NONE) return false;
+        return voter != s.submitter;
+    }
+
+    /// @notice True iff finalize(subId) would succeed right now. Used by the gateway's finalizer.
+    function canFinalize(uint256 subId) external view returns (bool) {
+        if (subId == 0 || subId >= nextSubId) return false;
+        Submission storage s = _subs[subId];
+        return s.status == Status.Reported && _finalizable(s);
+    }
+
+    /// @notice One side's vote count must exceed this for an early finalize.
+    function quorumThreshold(uint256 subId) public view returns (uint256) {
+        return _get(subId).eligibleVoters * quorumBps / Constants.BPS;
+    }
+
+    function votingEndsAt(uint256 subId) external view returns (uint256) {
+        Submission storage s = _get(subId);
+        return s.reportedAt == 0 ? 0 : uint256(s.reportedAt) + votingWindow;
+    }
+
+    // ---------- internals ----------
+
+    function _get(uint256 subId) internal view returns (Submission storage s) {
+        if (subId == 0 || subId >= nextSubId) revert UnknownSubmission(subId);
+        s = _subs[subId];
+    }
+
+    function _checkVote(Submission storage s, uint256 subId, address voter) internal view {
+        if (s.status != Status.Reported) revert WrongStatus(s.status);
+        if (s.topicId == 0) revert NewTopicNoVoting();
+        if (block.timestamp >= uint256(s.reportedAt) + votingWindow) revert VotingClosed();
+        uint64 since = graph.contributorSince(s.topicId, voter);
+        if (since == 0 || since >= s.reportedAt) revert NotEligible();
+        if (voteOf[subId][voter] != VOTE_NONE) revert AlreadyVoted();
+        if (voter == s.submitter) revert SubmitterCannotVote();
+    }
+
+    function _finalizable(Submission storage s) internal view returns (bool) {
+        if (s.topicId == 0) return true; // new topic: verifier is the only voter
+        if (block.timestamp >= uint256(s.reportedAt) + votingWindow) return true;
+        uint256 threshold = s.eligibleVoters * quorumBps / Constants.BPS;
+        return s.yes > threshold || s.no > threshold;
+    }
+
+    /// @dev Quorum is reached when at least quorumBps of the eligible voters voted.
+    ///      Reached: majority decides, a tie goes to the verifier. Not reached: the verifier decides.
+    function _outcome(Submission storage s) internal view returns (bool) {
+        if (s.topicId == 0) return s.pass;
+        uint256 votes = uint256(s.yes) + s.no;
+        bool quorum = votes > 0 && votes * Constants.BPS >= s.eligibleVoters * quorumBps;
+        if (!quorum || s.yes == s.no) return s.pass;
+        return s.yes > s.no;
+    }
+}

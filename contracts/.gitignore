@@ -1,0 +1,6 @@
+out/
+cache/
+broadcast/*/31337/
+.env
+# Keep only run-latest.json per chain; timestamped runs are duplicates.
+broadcast/**/run-[0-9]*.json
