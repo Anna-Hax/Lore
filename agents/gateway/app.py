@@ -54,13 +54,15 @@ document.getElementById("go").addEventListener("click", async (ev) => {
   try {
     const r = await fetch("/login/request?pending=" + encodeURIComponent(pending)); const req = await r.json();
     if (!r.ok) throw new Error(req.detail || r.status);
-    // ponytail: IDKit 4.0 core API as documented (IDKit.request + orbLegacy preset); pin and confirm in spike W1.
+    // IDKit 4.6 core (pinned in gateway/worldid.py): IDKit.request + orbLegacy preset.
     const { IDKit, orbLegacy } = await import(req.idkit_module);
-    const request = await IDKit.request({ app_id: req.app_id, action: req.action, rp_context: req.rp_context })
-                               .preset(orbLegacy({ signal: req.signal }));
+    const request = await IDKit.request({ app_id: req.app_id, action: req.action, rp_context: req.rp_context,
+                                          allow_legacy_proofs: true }).preset(orbLegacy({ signal: req.signal }));
     const a = document.getElementById("l"); a.href = request.connectorURI; a.hidden = false;
     say("Open this link with World App on your phone (or scan it there), then approve.");
-    const result = await request.pollUntilCompletion();
+    const outcome = await request.pollUntilCompletion();  // {success, result} or {success: false, error}; never throws
+    if (!outcome.success) throw new Error(outcome.error);
+    const result = outcome.result;
     say("Checking your proof\\u2026");
     const done = await fetch("/login/complete?pending=" + encodeURIComponent(pending),
                              { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(result) });

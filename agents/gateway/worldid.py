@@ -11,7 +11,12 @@ Config (Developer Portal): WORLD_APP_ID, WORLD_RP_ID, WORLD_RP_SIGNING_KEY, WORL
 The action must allow unlimited verifications per person, since each agent verifies.
 """
 
+import secrets
+import time
+
 import httpx
+from eth_account import Account
+from eth_account.messages import encode_defunct
 from eth_utils import keccak
 
 VERIFY_URL = "https://developer.world.org/api/v4/verify/{rp_id}"
@@ -19,6 +24,39 @@ VERIFY_URL = "https://developer.world.org/api/v4/verify/{rp_id}"
 # ponytail: if spike W3 finds the nullifier differs across credential types, keep only one here, or one
 # human could register two agents as two people.
 ALLOWED_CREDENTIALS = ("orb", "device")
+
+
+IDKIT_MODULE = "https://cdn.jsdelivr.net/npm/@worldcoin/idkit-core@4.6.0/+esm"  # pinned; no WASM, loads from a CDN
+RP_SIGNATURE_VERSION = 1
+RP_SIGNATURE_TTL = 300  # seconds, IDKit's default
+
+
+def hash_to_field(data: bytes) -> bytes:
+    """IDKit's hashToField: keccak256(data) >> 8, as 32 big-endian bytes."""
+    return (int.from_bytes(keccak(data), "big") >> 8).to_bytes(32, "big")
+
+
+def rp_signature_message(nonce: bytes, created_at: int, expires_at: int, action: str | None = None) -> bytes:
+    """@worldcoin/idkit-server computeRpSignatureMessage (v1.2.0):
+    version(1) || nonce(32) || created_at u64 BE (8) || expires_at u64 BE (8) || hashToField(action)? (32)."""
+    if len(nonce) != 32:
+        raise ValueError("nonce must be 32 bytes")
+    msg = bytes([RP_SIGNATURE_VERSION]) + nonce + created_at.to_bytes(8, "big") + expires_at.to_bytes(8, "big")
+    return msg + (hash_to_field(action.encode()) if action is not None else b"")
+
+
+def sign_request(signing_key: str, action: str | None = None, ttl: int = RP_SIGNATURE_TTL,
+                 now=time.time, entropy=lambda: secrets.token_bytes(32)) -> dict:
+    """Python port of @worldcoin/idkit-server signRequest: EIP-191 personal_sign of the RP message.
+
+    Returns {sig, nonce, created_at, expires_at}; sig is r || s || v with v = 27/28, like the JS version."""
+    nonce = hash_to_field(entropy())
+    created = int(now())
+    expires = created + ttl
+    signed = Account.sign_message(encode_defunct(primitive=rp_signature_message(nonce, created, expires, action)),
+                                  private_key=signing_key)
+    return {"sig": "0x" + bytes(signed.signature).hex(), "nonce": "0x" + nonce.hex(),
+            "created_at": created, "expires_at": expires}
 
 
 class WorldIDError(Exception):
@@ -44,21 +82,21 @@ class WorldID:
                  idkit_module: str | None = None, http: httpx.Client | None = None,
                  allowed: tuple[str, ...] = ALLOWED_CREDENTIALS):
         self.app_id, self.rp_id, self.action, self.signing_key = app_id, rp_id, action, signing_key
-        self.idkit_module, self.allowed = idkit_module, allowed
+        self.idkit_module, self.allowed = idkit_module or IDKIT_MODULE, allowed
         self.http = http or httpx.Client(timeout=30)
 
     def request(self, signal: str) -> dict:
         """What the user's browser needs to ask World App for a proof bound to `signal`."""
-        if not self.idkit_module:
-            raise NotImplementedError("WORLD_IDKIT_MODULE is not set (pinned in spike W1)")
         return {"app_id": self.app_id, "rp_id": self.rp_id, "action": self.action, "signal": signal,
                 "rp_context": self.rp_context(), "idkit_module": self.idkit_module}
 
     def rp_context(self) -> dict:
-        # ponytail: blocked on spike W1. World ships signRequest only for JS (@worldcoin/idkit-core/signing)
-        # and Go; port it to Python or run it as a tiny sidecar. Returns {rp_id, nonce, created_at, expires_at,
-        # signature}, signed with WORLD_RP_SIGNING_KEY.
-        raise NotImplementedError("World ID request signing pending spike W1")
+        """The signed RP context IDKit.request() needs (spike W1: signRequest ported from idkit-server 1.2.0)."""
+        if not self.signing_key:
+            raise NotImplementedError("WORLD_RP_SIGNING_KEY is not set")
+        r = sign_request(self.signing_key, self.action)
+        return {"rp_id": self.rp_id, "nonce": r["nonce"], "created_at": r["created_at"],
+                "expires_at": r["expires_at"], "signature": r["sig"]}
 
     def verify(self, result: dict, signal: str) -> str:
         """Check an IDKit result is for our action, an allowed credential and bound to exactly `signal`; verify
