@@ -124,7 +124,7 @@ All values are placeholders and every one must stay configurable. USDC has 6 dec
 |---|---|
 | `STAKE` | 10_000000 (10 USDC) |
 | `STAKE_FEE` | 500000 (0.5 USDC) |
-| `TOPIC_PRICE` | 5_000000 (5 USDC) |
+| `NODE_VALUE` | 1_000000 (1 USDC): a topic costs `NODE_VALUE` × its accepted nodes, roughly the model tokens a buyer saves; settable by ADMIN |
 | `PLATFORM_CUT_BPS` | 1000 (10%) |
 | `VOTING_WINDOW` | 24 hours |
 | `QUORUM_BPS` | 5000 (50% of eligible contributors) |
@@ -197,7 +197,8 @@ Rules to implement exactly:
 ```solidity
 interface IAccess {   // ERC1155, id = topicId
     event Bought(uint256 indexed topicId, address indexed buyer);
-    function buy(uint256 topicId) external;              // pulls TOPIC_PRICE, mints 1, calls Royalties.distribute; reverts if already held
+    function buy(uint256 topicId) external;              // pulls priceOf(topicId), mints 1, calls Royalties.distribute; reverts if held or banned
+    function priceOf(uint256 topicId) external view returns (uint256); // NODE_VALUE x the topic's node count
     function hasAccess(uint256 topicId, address a) external view returns (bool);
 }
 ```

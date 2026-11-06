@@ -12,6 +12,7 @@ WATCHED = {
     "TopicGraph": ["TopicCreated", "NodeAdded", "NodeMetaSet", "TopicMetaSet"],
     "Submissions": ["Submitted", "Reported", "Voted", "Finalized"],
     "Access": ["Bought"],
+    "Royalties": ["Distributed"],
     "Reports": ["LeakReported", "LeakMatched"],
     "PersonRegistry": ["AgentRegistered"],
 }
@@ -71,6 +72,10 @@ class Chain:
         p = bytes(self.c["PersonRegistry"].functions.personOf(self._a(addr)).call())
         return None if p == bytes(32) else hexstr(p)
 
+    def is_banned(self, addr: str) -> bool:
+        """P2's PersonRegistry.isBanned: the wallet, or the person behind it, was removed for a proven leak."""
+        return self.c["PersonRegistry"].functions.isBanned(self._a(addr)).call()
+
     def stake(self) -> int:
         return self.c["Submissions"].functions.stake().call()
 
@@ -100,12 +105,13 @@ class Chain:
     def params(self) -> dict:
         """Live economic parameters (all settable by ADMIN), for the public explorer."""
         sub, acc, roy = self.c["Submissions"].functions, self.c["Access"].functions, self.c["Royalties"].functions
-        return {"stake": sub.stake().call(), "stake_fee": sub.stakeFee().call(), "topic_price": acc.topicPrice().call(),
+        return {"stake": sub.stake().call(), "stake_fee": sub.stakeFee().call(), "node_value": acc.nodeValue().call(),
                 "platform_cut_bps": roy.platformCutBps().call(), "quorum_bps": sub.quorumBps().call(),
                 "voting_window": sub.votingWindow().call()}
 
-    def topic_price(self) -> int:
-        return self.c["Access"].functions.topicPrice().call()
+    def topic_price(self, topic_id: int) -> int:
+        """nodeValue x the topic's accepted nodes (P2's Access.priceOf), live."""
+        return self.c["Access"].functions.priceOf(topic_id).call()
 
     def latest(self) -> int:
         return self.w3.eth.block_number

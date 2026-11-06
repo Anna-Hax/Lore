@@ -19,6 +19,7 @@ from gateway import tasks, worker
 from gateway.app import create_app
 from gateway.db import connect
 from gateway.indexer import apply
+from gateway.oauth import PENDING_TTL
 from gateway.service import LoreError
 from gateway.worldid import WorldIDError
 from tests.fakes import FakeChain, FakeContent, FakeStorage
@@ -494,7 +495,7 @@ def test_logins_codes_and_tokens_expire_and_are_bound_to_their_client(env):
     async def flow():
         client, pending = await start_login(env)
         other, _ = await start_login(env, "other")
-        env.clock["t"] += 601  # past the pending login's 10 minutes
+        env.clock["t"] += PENDING_TTL + 1  # past the pending login's lifetime
         assert env.oauth.pending(pending) is None and env.oauth.complete_login(pending, person(ALICE)) is None
 
         client, pending = await start_login(env)
@@ -545,6 +546,20 @@ def test_paying_tools_send_their_transactions_through_the_signer(env):
             return [f"0xhash{i}" for i in range(len(txs))]
 
     env.svc.signer = RecordingSigner()
+    with env.svc.tx() as conn:  # a Lore-managed (Turnkey) wallet: Lore signs for it
+        conn.execute("INSERT INTO turnkey_wallets (person, email, created_ms, address, sub_org, ready)"
+                     " VALUES (?, 'a@example.com', 0, ?, 'sub-a', 1)", (person(ALICE), ALICE.address.lower()))
     out = env.svc.send(env.svc.prepare_buy(person(ALICE), 1))
     assert out["tx_hashes"] == ["0xhash0", "0xhash1"] and "transactions" not in out
     assert [t["description"] for t in env.svc.signer.txs] == ["USDC.approve", "Access.buy"]
+
+
+def test_a_banned_person_cannot_start_a_submission_or_purchase(env):
+    env.chain.banned = {ALICE.address.lower()}
+    try:
+        with pytest.raises(LoreError, match="removed from Lore"):
+            env.svc.prepare_submit(person(ALICE), "x" * 600, 0)
+        with pytest.raises(LoreError, match="removed from Lore"):
+            env.svc.prepare_buy(person(ALICE), 1)
+    finally:
+        env.chain.banned = set()

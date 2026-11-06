@@ -61,7 +61,8 @@ interface IAccess {
     // ERC1155, id = topicId
     event Bought(uint256 indexed topicId, address indexed buyer);
 
-    function buy(uint256 topicId) external; // pulls TOPIC_PRICE, mints 1, calls Royalties.distribute; reverts if already held
+    function buy(uint256 topicId) external; // pulls priceOf(topicId), mints 1, calls Royalties.distribute; reverts if held or banned
+    function priceOf(uint256 topicId) external view returns (uint256); // nodeValue x the topic's node count
     function hasAccess(uint256 topicId, address a) external view returns (bool);
 }
 

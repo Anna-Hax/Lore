@@ -80,3 +80,38 @@ def test_decimal_and_hex_nullifiers_give_the_same_person():
     assert to_bytes32_hex("255") == to_bytes32_hex("0xff") == "0x" + "0" * 62 + "ff"
     with pytest.raises(WorldIDError):
         to_bytes32_hex(str(2**256))
+
+
+# --- RP request signing (spike W1): port of @worldcoin/idkit-server 1.2.0 signRequest ---
+from eth_account import Account as _Account
+from eth_account.messages import encode_defunct as _encode_defunct
+
+from gateway.worldid import WorldID as _WorldID, hash_to_field, rp_signature_message, sign_request
+
+
+def test_rp_message_layout_matches_idkit_server():
+    nonce = bytes([0x11]) * 32
+    msg = rp_signature_message(nonce, 1700000000, 1700000300, "lore-person")
+    assert msg[0] == 1 and msg[1:33] == nonce
+    assert int.from_bytes(msg[33:41], "big") == 1700000000 and int.from_bytes(msg[41:49], "big") == 1700000300
+    assert msg[49:] == hash_to_field(b"lore-person") and len(msg) == 81
+    assert hash_to_field(b"lore-person")[0] == 0  # keccak >> 8 always leaves the top byte zero
+    assert len(rp_signature_message(nonce, 1, 2)) == 49  # no action
+
+
+def test_signed_request_recovers_to_the_rp_signer_with_v_27_or_28():
+    key = _Account.create()
+    r = sign_request(key.key.hex(), "lore-person", now=lambda: 1700000000, entropy=lambda: b"\x07" * 32)
+    assert r["expires_at"] - r["created_at"] == 300 and r["nonce"] == "0x" + hash_to_field(b"\x07" * 32).hex()
+    sig = bytes.fromhex(r["sig"][2:])
+    assert len(sig) == 65 and sig[64] in (27, 28)
+    msg = rp_signature_message(bytes.fromhex(r["nonce"][2:]), r["created_at"], r["expires_at"], "lore-person")
+    assert _Account.recover_message(_encode_defunct(primitive=msg), signature=sig) == key.address
+
+
+def test_rp_context_has_the_shape_idkit_expects():
+    key = _Account.create()
+    ctx = _WorldID("app_x", "rp_y", "lore-person", key.key.hex()).rp_context()
+    assert set(ctx) == {"rp_id", "nonce", "created_at", "expires_at", "signature"} and ctx["rp_id"] == "rp_y"
+    req = _WorldID("app_x", "rp_y", "lore-person", key.key.hex()).request("pending-1")
+    assert req["idkit_module"].startswith("https://cdn.jsdelivr.net/npm/@worldcoin/idkit-core@") and req["signal"] == "pending-1"

@@ -9,6 +9,8 @@ Only gas (0G) and MockUSDC funding happen outside MCP. The gateway needs Lore's 
 
 Env: LORE_GATEWAY_URL (default http://127.0.0.1:8080), LORE_CHAIN_ID (default 16602), E2E_TAG (default random;
 "none" submits the corpus text as is, for a fresh showcase deployment), E2E_TIMEOUT (seconds per wait, default 900).
+E2E_SIGNING=local uses self-held wallets instead (lore_link_wallet; every transaction signed and sent here, keys in
+deploy/state/e2e-agents.json); the fallback when Lore's Turnkey organization can't sign.
 E2E_EMAIL_DOMAIN (default example.com) names each agent's Turnkey user (lore-e2e-<name>@<domain>); gas and MockUSDC
 come from DEPLOYER_PRIVATE_KEY in contracts/.env.
     ... python e2e/run.py --check    # log in and list the MCP tools only; no chain writes
@@ -102,9 +104,10 @@ def login(gateway: str, name: str) -> str:
 class Agent:
     """One person's agent: an MCP session as that person, with a Lore (Turnkey) wallet that Lore signs from."""
 
-    def __init__(self, name: str, session, reader: ChainReader):
+    def __init__(self, name: str, session, reader: ChainReader, key: str | None = None):
         self.name, self.session, self.reader = name, session, reader
         self.address = None  # set by create_wallet
+        self.acct = Account.from_key(key) if key else None  # local signing: a self-held wallet
 
     async def tool(self, name: str, **arguments):
         result = await self.session.call_tool(name, arguments)
@@ -122,10 +125,35 @@ class Agent:
     async def act(self, tool: str, **arguments):
         """A tool that changes chain state: Lore signs and sends, and returns once every transaction is mined."""
         out = await self.tool(tool, **arguments)
+        if out.get("sign_locally"):  # a self-held wallet: sign and send here, in order
+            out["tx_hashes"] = await asyncio.to_thread(self.send_locally, out["transactions"])
         assert out.get("tx_hashes"), f"{self.name}: {tool} sent nothing"
         return out
 
+    def send_locally(self, txs: list[dict]) -> list[str]:
+        w3, hashes = self.reader.web3, []
+        for t in txs:
+            assert t["from"].lower() == self.acct.address.lower(), f"{t['description']} is not for {self.name}'s wallet"
+            tx = {"to": t["to"], "data": t["data"], "value": int(t.get("value", 0)), "chainId": int(t["chain_id"]),
+                  "from": self.acct.address, "nonce": w3.eth.get_transaction_count(self.acct.address, "pending"),
+                  "gasPrice": w3.eth.gas_price}
+            tx["gas"] = int(w3.eth.estimate_gas(tx) * 1.3)
+            h = w3.eth.send_raw_transaction(self.acct.sign_transaction(tx).raw_transaction)
+            receipt = w3.eth.wait_for_transaction_receipt(h, timeout=180)
+            assert receipt.status == 1, f"{self.name}: {t['description']} reverted"
+            hashes.append("0x" + bytes(h).hex())
+        return hashes
+
     async def create_wallet(self) -> None:
+        if self.acct:  # local signing: link the self-held wallet with a signed message
+            from eth_account.messages import encode_defunct
+
+            ask = await self.tool("lore_link_wallet", wallet=self.acct.address)
+            sig = self.acct.sign_message(encode_defunct(text=ask["sign_this"])).signature.to_0x_hex()
+            who = await self.tool("lore_link_wallet", wallet=self.acct.address, signature=sig)
+            self.address = self.acct.address
+            assert self.address.lower() in who["wallets"], f"{self.name}: wallet not linked"
+            return
         domain = os.environ.get("E2E_EMAIL_DOMAIN", "example.com")
         out = await self.tool("lore_create_wallet", email=f"lore-e2e-{self.name}@{domain}")
         self.address = self.reader.web3.to_checksum_address(out["address"])
@@ -348,18 +376,30 @@ async def main_async(check_only: bool, resume: bool = False) -> None:
 
     from contextlib import AsyncExitStack
 
+    local = os.environ.get("E2E_SIGNING") == "local"
+    keys = {}
+    if local:  # self-held test wallets, kept between runs so their gas is reused
+        path = ROOT / "deploy" / "state" / "e2e-agents.json"
+        keys = json.loads(path.read_text()) if path.exists() else {}
+        for name in PEOPLE:
+            keys.setdefault(name, "0x" + secrets.token_hex(32))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(keys, indent=2))
+
     async with AsyncExitStack() as stack:
         agents = {}
         for name in PEOPLE:
-            # One demo person per run and name: a person who already has a wallet linked (an earlier run on this
-            # deployment) would get a second one, and tools would then ask which wallet to use.
-            token = await asyncio.to_thread(login, gateway, f"{name}-{tag}" if tag else name)
+            # One demo person per run and name (P1): a person who already has a wallet linked (an earlier run on this
+            # deployment) would get a second one, and tools would then ask which wallet to use. Local mode adds its own
+            # suffix, so nobody has both a Turnkey and a self-held wallet.
+            who = f"{name}-{tag}" if tag else name
+            token = await asyncio.to_thread(login, gateway, f"{who}-local" if local else who)
             http = await stack.enter_async_context(httpx2.AsyncClient(headers={"Authorization": f"Bearer {token}"},
                                                                      timeout=httpx2.Timeout(300)))
             streams = await stack.enter_async_context(streamable_http_client(f"{gateway}/mcp", http_client=http))
             session = await stack.enter_async_context(ClientSession(streams[0], streams[1]))
             await session.initialize()
-            agents[name] = Agent(name, session, reader)
+            agents[name] = Agent(name, session, reader, key=keys.get(name))
         names = {t.name for t in (await agents["ada"].session.list_tools()).tools}
         missing = TOOLS - names
         assert not missing, f"hosted MCP is missing tools: {sorted(missing)}"
@@ -368,7 +408,7 @@ async def main_async(check_only: bool, resume: bool = False) -> None:
             return
         for agent in agents.values():
             await agent.create_wallet()  # the same wallet again on a rerun: one per person
-        say("Turnkey wallets created and linked to their people on-chain (PersonRegistry)")
+        say(("self-held wallets" if local else "Turnkey wallets") + " created and linked to their people on-chain (PersonRegistry)")
         say("funding test agents (gas + MockUSDC, testnet only)")
         await asyncio.to_thread(fund, reader, [a.address for a in agents.values()], 60_000000)
         result = await Scenario(reader, agents, tag).run(resume)

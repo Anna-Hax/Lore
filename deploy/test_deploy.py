@@ -41,12 +41,16 @@ def test_generated_secrets_are_private_separate_and_accepted_by_launch(tmp_path)
     with pytest.raises(ValueError):
         launch.secret_environment("gateway", gateway.read_text())
     gateway.write_text(gateway.read_text().replace("TURNKEY_API_PRIVATE_KEY=", "TURNKEY_API_PRIVATE_KEY=" + "7" * 64))
+    with pytest.raises(ValueError):  # World RP key must also be supplied by the operator
+        launch.secret_environment("gateway", gateway.read_text())
+    gateway.write_text(gateway.read_text().replace("WORLD_RP_SIGNING_KEY=", "WORLD_RP_SIGNING_KEY=" + "8" * 64))
     storage = set()
     for service in launch.REQUIRED:
         text = (directory / f"{service}.env").read_text()
         values = launch.secret_environment(service, text)
         storage.add(values["ZG_STORAGE_PRIVATE_KEY"])
         assert ("MASTER_KEY" in values) == (service == "gateway")
+        assert ("WORLD_RP_SIGNING_KEY" in values) == (service == "gateway")
     assert len(storage) == 3
     assert not any(value in (directory / "addresses.json").read_text() for value in storage)
 
@@ -70,6 +74,44 @@ def test_compose_matches_launch_and_keeps_secrets_out_of_the_environment():
         assert service["environment"].get("LORE_STORAGE_CLI")
     assert compose["services"]["gateway"]["ports"][0].startswith("127.0.0.1:")
     assert "ports" not in compose["services"]["verifier"] and "ports" not in compose["services"]["curator"]
+    assert compose["services"]["gateway"]["environment"]["WORLD_IDKIT_MODULE"] == (
+        "${WORLD_IDKIT_MODULE:-https://cdn.jsdelivr.net/npm/@worldcoin/idkit-core@4.6.0/+esm}"
+    )
+
+
+@pytest.mark.parametrize("key", [None, "", "short", "g" * 64, "1" * 63, "1" * 65])
+def test_gateway_refuses_missing_or_malformed_world_signing_key(key):
+    values = {name: "1" * 64 for name in launch.REQUIRED["gateway"]}
+    if key is None:
+        del values["WORLD_RP_SIGNING_KEY"]
+    else:
+        values["WORLD_RP_SIGNING_KEY"] = key
+    with pytest.raises(ValueError):
+        launch.secret_environment("gateway", "\n".join(f"{name}={value}" for name, value in values.items()))
+
+
+@pytest.mark.parametrize("service", ["verifier", "curator"])
+def test_world_signing_key_is_rejected_by_other_services(service):
+    values = {name: "1" * 64 for name in launch.REQUIRED[service]}
+    values["WORLD_RP_SIGNING_KEY"] = "2" * 64
+    with pytest.raises(ValueError):
+        launch.secret_environment(service, "\n".join(f"{name}={value}" for name, value in values.items()))
+
+
+def test_launch_passes_world_signing_key_from_secret_file_to_gateway(monkeypatch, capsys):
+    values = {name: "1" * 64 for name in launch.REQUIRED["gateway"]}
+    values["WORLD_RP_SIGNING_KEY"] = "0x" + "2" * 64
+    monkeypatch.setenv("LORE_SERVICE", "gateway")
+    # Register environment cleanup for every variable launch.main writes.
+    for name in values:
+        monkeypatch.setenv(name, "replaced-by-mounted-secret")
+    monkeypatch.setattr(launch.Path, "read_text", lambda _: "\n".join(f"{n}={v}" for n, v in values.items()))
+    executed = []
+    monkeypatch.setattr(launch.os, "execvp", lambda program, argv: executed.append(
+        (program, argv, os.environ["WORLD_RP_SIGNING_KEY"])))
+    launch.main()
+    assert executed == [("python", ["python", "-m", "gateway"], values["WORLD_RP_SIGNING_KEY"])]
+    assert capsys.readouterr() == ("", "")
 
 
 def test_receipt_roots_come_from_metadata_and_reports(tmp_path):
@@ -119,6 +161,16 @@ def test_role_check_reports_missing_roles_and_gas():
     assert bad["ready"] is False and bad["roles"]["curator"] is False and bad["funded"]["verifier"] is False
 
 
+def test_role_check_ignores_non_wallet_entries_like_the_turnkey_public_key():
+    class Reader:
+        web3 = SimpleNamespace(eth=SimpleNamespace(get_balance=lambda address: 1 if address.startswith("0x") else 1 / 0))
+
+        def call(self, contract, method, *args):
+            return True if method == "hasRole" else method
+
+    report = check_roles.check(Reader(), {"gateway": "0xa", "verifier": "0xb", "curator": "0xc",
+                                          "turnkey_delegated_public_key": "02" + "ab" * 32})
+    assert report["ready"] is True and "turnkey_delegated_public_key" not in report["funded"]
 def test_docker_builds_the_same_storage_cli_revision_as_build_py():
     dockerfile = (HERE / "Dockerfile").read_text()
     build = (HERE.parent / "shared" / "storage_cli" / "build.py").read_text()

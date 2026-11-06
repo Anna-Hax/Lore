@@ -641,6 +641,17 @@
   },
   {
     "type": "error",
+    "name": "Banned",
+    "inputs": [
+      {
+        "name": "agent",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "DuplicateContent",
     "inputs": [
       {

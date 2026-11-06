@@ -63,6 +63,7 @@ contract Submissions is ISubmissions, LoreBase {
     error SubmitterCannotVote();
     error NotFinalizable();
     error NotRegistered(address agent);
+    error Banned(address agent);
 
     constructor(LoreRoles roles_, IERC20 usdc_, TopicGraph graph_) LoreBase(roles_) {
         if (address(usdc_) == address(0) || address(graph_) == address(0)) revert ZeroAddress();
@@ -97,6 +98,7 @@ contract Submissions is ISubmissions, LoreBase {
     function submit(uint256 topicId, bytes32 contentHash, bytes32 storageRoot) external returns (uint256 subId) {
         if (topicId != 0 && !graph.topicExists(topicId)) revert UnknownTopic(topicId);
         if (_personOf(msg.sender) == bytes32(0)) revert NotRegistered(msg.sender); // World ID first
+        if (graph.registry().isBanned(msg.sender)) revert Banned(msg.sender);
         if (contentHashUsed[contentHash]) revert DuplicateContent(contentHash);
         contentHashUsed[contentHash] = true;
 
@@ -186,7 +188,7 @@ contract Submissions is ISubmissions, LoreBase {
         if (s.status != Status.Reported || s.topicId == 0) return false;
         if (block.timestamp >= uint256(s.reportedAt) + votingWindow) return false;
         bytes32 person = _personOf(voter);
-        if (person == bytes32(0)) return false;
+        if (person == bytes32(0) || graph.registry().isBanned(voter)) return false;
         uint64 since = graph.personSince(s.topicId, person);
         if (since == 0 || since >= s.reportedAt) return false;
         if (voteOf[subId][person] != VOTE_NONE) return false;
@@ -225,6 +227,7 @@ contract Submissions is ISubmissions, LoreBase {
         if (block.timestamp >= uint256(s.reportedAt) + votingWindow) revert VotingClosed();
         person = _personOf(voter);
         if (person == bytes32(0)) revert NotRegistered(voter);
+        if (graph.registry().isBanned(voter)) revert Banned(voter);
         uint64 since = graph.personSince(s.topicId, person);
         if (since == 0 || since >= s.reportedAt) revert NotEligible();
         if (voteOf[subId][person] != VOTE_NONE) revert AlreadyVoted();

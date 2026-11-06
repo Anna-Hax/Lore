@@ -33,7 +33,7 @@ abstract contract Base is Test {
 
     uint256 constant STAKE = Constants.STAKE;
     uint256 constant FEE = Constants.STAKE_FEE;
-    uint256 constant PRICE = Constants.TOPIC_PRICE;
+    uint256 constant PRICE = Constants.NODE_VALUE; // the price of a one-node topic
     uint256 constant WINDOW = Constants.VOTING_WINDOW;
 
     uint256 private _salt;
@@ -146,7 +146,7 @@ abstract contract Base is Test {
     }
 
     function _buy(address who, uint256 topicId) internal {
-        if (usdc.balanceOf(who) < access.topicPrice()) _fund(who, access.topicPrice() * 10);
+        if (usdc.balanceOf(who) < access.priceOf(topicId)) _fund(who, access.priceOf(topicId) * 10);
         vm.prank(who);
         access.buy(topicId);
     }

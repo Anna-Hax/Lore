@@ -34,7 +34,7 @@ def test_public_overview_has_no_plaintext(env):
         r = c.get("/api/overview")
     assert r.status_code == 200 and r.headers["access-control-allow-origin"] == "*"
     data = r.json()
-    assert data["stats"]["topics"] >= 1 and data["params"]["topic_price"] == env.chain.price
+    assert data["stats"]["topics"] >= 1 and data["params"]["node_value"] == env.chain.price
     blob = json.dumps(data)
     for text in ("alice research", "bob follow-up"):  # the seeded research texts never leave as plaintext
         assert text not in blob

@@ -106,8 +106,11 @@
     topicId: null, nodeId: null, statusFilter: 'All', topicFilter: 'all',
     orient: null,
   };
-  const P = () => Object.assign({ stake: 10e6, stake_fee: 5e5, topic_price: 5e6, platform_cut_bps: 1000, quorum_bps: 5000, voting_window: 86400 },
+  const P = () => Object.assign({ stake: 10e6, stake_fee: 5e5, node_value: 1e6, platform_cut_bps: 1000, quorum_bps: 5000, voting_window: 86400 },
     Object.fromEntries(Object.entries((state.data && state.data.params) || {}).filter(([, v]) => isNum(v))));
+
+  // A topic costs node_value x its nodes (Access.priceOf); the API sends it as `price` when live.
+  const topicPrice = (t) => (t && isNum(t.price)) ? t.price : P().node_value * ((t && t.node_count) || 0);
 
   function normalize(d) {
     d = d && typeof d === 'object' ? d : {};
@@ -220,9 +223,9 @@
       ['cpu', 'Verify', 'The AI verifier runs privately on 0G Compute in a TEE: length, relevance, fit and originality. Its report goes on-chain.', '0G Compute'],
       ['vote', 'Vote', `Past contributors vote, one vote per real person (World ID). Quorum ${pctBps(p.quorum_bps)}, ${Math.round(p.voting_window / 3600)}h window. Voters are never paid. New topics: the verifier decides.`, 'World ID'],
       ['node', 'Node', `Accepted: stake back minus ${usdc(p.stake_fee)} USDC and the node joins the graph. Rejected: the stake goes to the treasury.`, 'TopicGraph'],
-      ['cart', 'Buy', `${usdc(p.topic_price)} USDC buys a soulbound ERC-1155 pass: the whole topic, permanently, including future nodes.`, 'Access'],
-      ['coins', 'Royalties', `${pctBps(10000 - p.platform_cut_bps)} of every sale is split equally across the topic's nodes, claimable on-chain.`, 'Royalties'],
-      ['search', 'Trace leaks', 'Every copy is invisibly watermarked to the reader\'s wallet. A leaked copy is traced and recorded on-chain.', 'Reports'],
+      ['cart', 'Buy', `A topic costs ${usdc(p.node_value)} USDC per node (about the model tokens you save by not redoing it) and buys a soulbound ERC-1155 pass: the whole topic, permanently, including future nodes.`, 'Access'],
+      ['coins', 'Royalties', `${pctBps(10000 - p.platform_cut_bps)} of every sale is split equally across the topic's nodes, so each node earns ${usdc(p.node_value * (10000 - p.platform_cut_bps) / 10000)} USDC per buyer, claimable on-chain.`, 'Royalties'],
+      ['search', 'Trace leaks', 'Every copy is invisibly watermarked to the reader\'s wallet. A proven leak is traced deterministically and the leaker is removed from Lore.', 'Reports'],
     ];
     add(clear($('steps')), steps.map(([ic, t, body, where]) =>
       h('li', { class: 'step' }, h('h3', {}, icon(ic, 16), t), h('p', {}, body), h('span', { class: 'where' }, where))));
@@ -304,7 +307,7 @@
       h('h3', {}, t.title || `Topic ${t.topic_id}`),
       t.description ? h('p', { class: 'desc' }, t.description) : null,
       h('div', { class: 'row' },
-        h('span', { class: 'price' }, `${usdc(p.topic_price)} USDC · lifetime pass`),
+        h('span', { class: 'price' }, `${usdc(topicPrice(t))} USDC · lifetime pass`),
         h('span', {}, h('b', {}, fmtInt(t.buyers)), ' buyers'),
         h('span', {}, h('b', {}, fmtInt(t.contributors)), ' contributors')),
       proofBadge(t.proof, 'Curator', 'this topic summary'),
@@ -472,7 +475,7 @@
         sub ? h('dd', {}, h('button', { type: 'button', class: 'link-btn', onclick: () => showSubmission(sub.sub_id) }, `Submission #${sub.sub_id}`)) : null),
       h('div', { class: 'locked' }, icon('lock', 16), h('span', {},
         h('b', {}, 'Content is encrypted on 0G Storage. '),
-        `Buyers of this topic (${usdc(p.topic_price)} USDC, lore_buy) read it through lore_read_topic; each copy is watermarked to the reader's wallet.`)),
+        `Buyers of this topic (${usdc(topicPrice(topicById(n.topic_id)))} USDC, lore_buy) read it through lore_read_topic; each copy is watermarked to the reader's wallet.`)),
       proofBadge(n.proof, 'Curator', 'this title and description'),
     );
   }
@@ -614,6 +617,7 @@
     ['lore_create_wallet', 'Create your Lore wallet (Turnkey; you own it, Lore signs only Lore calls)'],
     ['lore_wallet', 'Your wallet address and balances'],
     ['lore_whoami', 'Your person and linked wallets'],
+    ['lore_continue', 'Send an action your human approved with World ID'],
   ];
   function renderConnect() {
     let url = state.data.mcp_url;
@@ -638,7 +642,9 @@
     const reportsAddr = d.chain.contracts && d.chain.contracts.Reports;
     box.append(h('p', { class: 'note' },
       'Each copy delivered to a buyer or voter carries an invisible watermark (zero-width characters keyed to their wallet). When leaked text turns up, the leak detector matches the watermark and records it on-chain with ',
-      h('code', { class: 'mono' }, 'Reports.recordMatch'), isAddr(reportsAddr) ? [' (', addrLink(reportsAddr), ')'] : null, '.'));
+      h('code', { class: 'mono' }, 'Reports.recordMatch'), isAddr(reportsAddr) ? [' (', addrLink(reportsAddr), ')'] : null,
+      '. A proven leaker is removed from Lore completely (every wallet of that person, every topic) through ',
+      h('code', { class: 'mono' }, 'PersonRegistry.ban'), '.'));
     if (!d.reports.length) { box.append(h('p', { class: 'empty' }, 'No leak reports yet.')); return; }
     const traced = d.reports.filter((r) => r.matched).length;
     box.append(h('p', { class: 'chain-line', style: 'margin-top:10px' }, `${traced} of ${d.reports.length} reports traced to a wallet.`));
@@ -649,6 +655,23 @@
         h('span', { class: 'score', title: 'Watermark match score' }, isNum(r.score_bps) ? `${pctBps(r.score_bps)} match` : '')),
       h('div', { class: 't' }, topicTitle(r.topic_id)),
       r.matched ? h('div', { class: 't' }, 'Leaked by ', addrLink(r.matched_wallet)) : h('div', { class: 't' }, 'No watermark matched a known reader.')))));
+  }
+
+  const CHECK_STATUS = { approved: 'Approved', used: 'Approved · sent', denied: 'Denied', expired: 'Expired', pending: 'Waiting' };
+  function renderCheckpoints() {
+    const box = clear($('checkBody'));
+    const list = Array.isArray(state.data.checkpoints) ? state.data.checkpoints : [];
+    box.append(h('p', { class: 'note' },
+      'Before Lore signs a stake, purchase, vote or claim from a person\'s wallet, the agent must get that person\'s ',
+      h('b', {}, 'fresh World ID approval'), ' (World ID Agent Pass, max_age=0) for that one action. Denied, cancelled or expired approvals send nothing.'));
+    if (!list.length) { box.append(h('p', { class: 'empty' }, 'No agent actions have asked for approval yet.')); return; }
+    box.append(h('ul', { class: 'leak-list' }, list.map((c) => h('li', { class: 'leak' },
+      h('div', { class: 'row' },
+        h('b', {}, String(c.action || 'agent action')),
+        h('span', { class: `badge ${c.status === 'used' || c.status === 'approved' ? 'ok' : (c.status === 'pending' ? 'clean' : 'traced')}` },
+          CHECK_STATUS[c.status] || String(c.status))),
+      h('div', { class: 't' }, c.reason ? String(c.reason) : (c.status === 'pending' ? 'Waiting for the person' : '')),
+      isNum(c.created) ? h('div', { class: 't muted' }, fmtDate(c.created)) : null))));
   }
 
   const CONTRACTS = [
@@ -691,7 +714,7 @@
       selectTopic(state.topicId, null, false);
     } else renderTopic();
     renderFilters(); renderSubs();
-    renderConnect(); renderLeaks(); renderContracts();
+    renderConnect(); renderLeaks(); renderCheckpoints(); renderContracts();
   }
 
   let rt = null;

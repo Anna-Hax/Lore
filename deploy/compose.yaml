@@ -32,7 +32,7 @@ services:
       WORLD_RP_ID: ${WORLD_RP_ID:-}
       LORE_DEMO_LOGIN: ${LORE_DEMO_LOGIN:-0}
       WORLD_ACTION: ${WORLD_ACTION:-lore-person}
-      WORLD_IDKIT_MODULE: ${WORLD_IDKIT_MODULE:-}
+      WORLD_IDKIT_MODULE: ${WORLD_IDKIT_MODULE:-https://cdn.jsdelivr.net/npm/@worldcoin/idkit-core@4.6.0/+esm}
       # Users' wallets on Turnkey with Lore's delegated access (agents/gateway/turnkey.py). Public, not secrets.
       TURNKEY_ORGANIZATION_ID: ${TURNKEY_ORGANIZATION_ID:?Set Lore's Turnkey parent organization id}
       TURNKEY_API_PUBLIC_KEY: ${TURNKEY_API_PUBLIC_KEY:?Set the parent org API public key}

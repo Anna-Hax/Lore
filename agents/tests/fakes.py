@@ -16,7 +16,7 @@ class FakeChain:
         return Web3.to_checksum_address(addr)
 
     def params(self):
-        return {"stake": self.stake_amount, "stake_fee": 500000, "topic_price": self.price, "platform_cut_bps": 1000,
+        return {"stake": self.stake_amount, "stake_fee": 500000, "node_value": self.price, "platform_cut_bps": 1000,
                 "quorum_bps": 5000, "voting_window": self.window}
 
     def has_access(self, topic_id, addr):
@@ -45,10 +45,15 @@ class FakeChain:
     def voting_window(self):
         return self.window
 
-    def topic_price(self):
+    def topic_price(self, topic_id=None):
         return self.price
 
     stake_amount, claimable_by_node = 10_000000, {}
+
+    banned: set = set()
+
+    def is_banned(self, addr):
+        return addr.lower() in self.banned
 
     def stake(self):
         return self.stake_amount

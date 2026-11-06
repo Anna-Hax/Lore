@@ -1,5 +1,5 @@
 {
- "generated_at": 1793984604,
+ "generated_at": 1793987644,
  "chain": {
   "chain_id": 16602,
   "name": "0G Galileo Testnet",
@@ -32,19 +32,19 @@
   "rejected": 1,
   "in_review": 0,
   "people": 4,
-  "purchases": 0,
-  "volume_usdc": 0,
-  "royalties_usdc": 0,
-  "leak_reports": 0,
-  "leaks_traced": 0
+  "purchases": 1,
+  "volume_usdc": 5000000,
+  "royalties_usdc": 4500000,
+  "leak_reports": 1,
+  "leaks_traced": 1
  },
  "topics": [
   {
    "topic_id": 1,
    "title": "LoRA Fine-Tuning Small Models for Invoice JSON Extraction",
-   "description": "An empirical study of LoRA fine-tuning open 1B-3B models to extract invoice fields as JSON. One node sweeps the adapter-side levers: rank and hyperparameters, layers to adapt, synthetic versus real data, and sequence packing, scored by exact-match F1 on real documents. A second holds the adapter fixed and varies the training recipe\u00e2\u20ac\u201dlearning-rate schedule, warmup, mixing in general instruction data, curriculum ordering, embedding freezing\u00e2\u20ac\u201djudged on extraction accuracy and retention of general ability. Together they cover the full tuning pipeline for budget-friendly structured extraction.",
+   "description": "An empirical study of LoRA fine-tuning open 1B-3B models for invoice JSON extraction. One node sweeps adapter-side levers\u00e2\u20ac\u201drank, target layers, synthetic versus real data, sequence packing\u00e2\u20ac\u201dscored by exact-match F1 on real documents. A second fixes the adapter and varies the training recipe\u00e2\u20ac\u201dlearning-rate schedule, warmup, instruction mixing, curriculum ordering, embedding freezing\u00e2\u20ac\u201djudged on extraction F1 and general-ability retention. A third audits the synthetic training data for paraphrased benchmark copies, comparing detection methods and re-scoring the tuning comparison after cleanup.",
    "node_count": 3,
-   "buyers": 0,
+   "buyers": 1,
    "contributors": 3,
    "proof": {
     "status": "pass",
@@ -53,13 +53,13 @@
     "signer": "0x0766BC72beB6dAe764eE51C781c0A68117E69179",
     "binding": "e2ee-ciphertext",
     "private": true,
-    "root": "0x675b160c902b4413a407f4bd352943479edf43d8c6e98f7d715aa733be8c4f9d"
+    "root": "0x101a8af5b68feac73a10079cf4bce43129c2e3c2e41f238fd53a383d18c931f5"
    }
   },
   {
    "topic_id": 2,
-   "title": "Chunk Size and Chunking Strategies for RAG QA over Internal Documentation",
-   "description": "This topic examines how chunking decisions shape retrieval-augmented question answering over a large internal engineering wiki. It centers on a hands-on sweep of fixed chunk sizes with token overlap, scored by answer correctness against a benchmark of human-written questions, and extends to three popular alternatives: semantic chunking via embedding breakpoints, sentence-window retrieval, and prepending page titles to chunks. Together they frame the trade-off between context sufficiency and retrieval precision, and where tuning effort is best spent.",
+   "title": "Chunking and Retrieval Strategies for RAG QA over Internal Documentation",
+   "description": "This topic covers the two core levers of RAG QA over a large internal engineering wiki: chunking documents and retrieving chunks. One part sweeps fixed chunk sizes with token overlap and compares them with semantic chunking, sentence-window retrieval, and prepending page titles. The other builds on fixed-size chunks to test hybrid sparse-dense retrieval with rank fusion, cross-encoder reranking, LLM query expansion, retrieving more chunks, and embedding fine-tuning. Both are scored by answer correctness on a benchmark of human-written questions, framing where tuning effort pays off.",
    "node_count": 2,
    "buyers": 0,
    "contributors": 2,
@@ -70,7 +70,7 @@
     "signer": "0x0766BC72beB6dAe764eE51C781c0A68117E69179",
     "binding": "e2ee-ciphertext",
     "private": true,
-    "root": "0xc5c4df2c07309f032c103aecf161b6ee2e29d2184b92f0c2b929a8c4a79b77cf"
+    "root": "0xcd554c188ba6e21769b02cd082fcf4e545015402ff200a018c6203f5e088a83e"
    }
   }
  ],
@@ -115,10 +115,18 @@
    "node_id": 3,
    "topic_id": 1,
    "contributor": "0x36f95751703e1b1b5011e654b2a4d8de48173f78",
-   "title": null,
-   "description": null,
+   "title": "Detecting Paraphrased Benchmark Contamination in Synthetic Training Data",
+   "description": "An audit of whether the synthetic invoice data used to fine-tune small extraction models contained paraphrased copies of the evaluation benchmark, since both drew on the same public templates. It compares deduplication methods\u00e2\u20ac\u201dexact and n-gram matching versus document-level embedding similarity\u00e2\u20ac\u201dvalidates them through manual review of flagged pairs, and re-scores the fine-tuning comparison after cleanup. Readers learn how paraphrase contamination arises, which detection methods and granularities are reliable, and how to audit synthetic training data before trusting benchmark results.",
    "parents": [],
-   "proof": null
+   "proof": {
+    "status": "pass",
+    "model": "glm-5.3",
+    "provider": "0xD179F4526064846dE9a9E9D93683AF75CB72E503",
+    "signer": "0x0766BC72beB6dAe764eE51C781c0A68117E69179",
+    "binding": "e2ee-ciphertext",
+    "private": true,
+    "root": "0xe6e7c52d97b736857405871942851021233311b98203ba0788f5e508fe25ca93"
+   }
   },
   {
    "node_id": 4,
@@ -141,12 +149,20 @@
    "node_id": 5,
    "topic_id": 2,
    "contributor": "0xa9f589e4c15985d751068f65f49801e78b178cf6",
-   "title": null,
-   "description": null,
+   "title": "Hybrid Retrieval and Reranking for RAG QA over an Internal Engineering Wiki",
+   "description": "This research evaluates retrieval-stage improvements for RAG QA over a large internal engineering wiki, building on fixed-size chunks. Scored on several hundred human-written questions, it compares dense retrieval with a hybrid sparse-dense setup using rank fusion, then measures the added effect of a cross-encoder reranker, including its latency cost. It also tests LLM query expansion, retrieving more chunks per query, and embedding fine-tuning to see whether they justify their effort. Readers will learn which retrieval levers matter most and a practical setup for production.",
    "parents": [
     4
    ],
-   "proof": null
+   "proof": {
+    "status": "pass",
+    "model": "glm-5.3",
+    "provider": "0xD179F4526064846dE9a9E9D93683AF75CB72E503",
+    "signer": "0x0766BC72beB6dAe764eE51C781c0A68117E69179",
+    "binding": "e2ee-ciphertext",
+    "private": true,
+    "root": "0xf8684f07a9339e8b8f040eb28e97781c8b285bf5ed04446f81323add0e008eae"
+   }
   }
  ],
  "submissions": [
@@ -363,5 +379,13 @@
    }
   }
  ],
- "reports": []
+ "reports": [
+  {
+   "report_id": 1,
+   "topic_id": 1,
+   "matched": true,
+   "matched_wallet": "0xebf514da76427c0e0c04ca1527a09ba9922c75ed",
+   "score_bps": 10000
+  }
+ ]
 }

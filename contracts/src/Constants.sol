@@ -7,7 +7,7 @@ pragma solidity ^0.8.24;
 library Constants {
     uint256 internal constant STAKE = 10_000000; // 10 USDC
     uint256 internal constant STAKE_FEE = 500000; // 0.5 USDC
-    uint256 internal constant TOPIC_PRICE = 5_000000; // 5 USDC
+    uint256 internal constant NODE_VALUE = 1_000000; // 1 USDC per node: a topic costs NODE_VALUE x its nodes
     uint256 internal constant PLATFORM_CUT_BPS = 1000; // 10%
     uint256 internal constant VOTING_WINDOW = 24 hours;
     uint256 internal constant QUORUM_BPS = 5000; // 50% of eligible contributors
