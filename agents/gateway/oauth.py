@@ -30,7 +30,7 @@ from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 from gateway.db import connect
 
 SCOPES = ["lore"]
-PENDING_TTL, CODE_TTL, ACCESS_TTL, REFRESH_TTL = 600, 300, 3600, 30 * 24 * 3600
+PENDING_TTL, CODE_TTL, ACCESS_TTL, REFRESH_TTL = 1800, 300, 3600, 30 * 24 * 3600  # login: 30 min to finish World ID
 UNUSED_CLIENT_TTL = 24 * 3600  # registration is open: forget clients that never completed a login
 MAX_PENDING = 10_000           # open /authorize can't grow the database without bound
 LOOPBACK = {"localhost", "127.0.0.1", "::1"}

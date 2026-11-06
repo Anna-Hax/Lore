@@ -19,6 +19,7 @@ from gateway import tasks, worker
 from gateway.app import create_app
 from gateway.db import connect
 from gateway.indexer import apply
+from gateway.oauth import PENDING_TTL
 from gateway.service import LoreError
 from gateway.worldid import WorldIDError
 from tests.fakes import FakeChain, FakeContent, FakeStorage
@@ -494,7 +495,7 @@ def test_logins_codes_and_tokens_expire_and_are_bound_to_their_client(env):
     async def flow():
         client, pending = await start_login(env)
         other, _ = await start_login(env, "other")
-        env.clock["t"] += 601  # past the pending login's 10 minutes
+        env.clock["t"] += PENDING_TTL + 1  # past the pending login's lifetime
         assert env.oauth.pending(pending) is None and env.oauth.complete_login(pending, person(ALICE)) is None
 
         client, pending = await start_login(env)

@@ -23,7 +23,7 @@ import httpx
 import jwt
 from eth_utils import keccak
 
-ATTEMPT_TTL = 600  # seconds a login/approval attempt stays open
+ATTEMPT_TTL = 1800  # seconds a login/approval attempt stays open
 CLOCK_SKEW = 60
 ACR_PREFIX = "https://world.org/oidc/acr/"
 ACCEPTED_ACR = (ACR_PREFIX + "orb", ACR_PREFIX + "orb-face")  # the default; production discovery advertises these
