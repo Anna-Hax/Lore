@@ -546,6 +546,9 @@ def test_paying_tools_send_their_transactions_through_the_signer(env):
             return [f"0xhash{i}" for i in range(len(txs))]
 
     env.svc.signer = RecordingSigner()
+    with env.svc.tx() as conn:  # a Lore-managed (Turnkey) wallet: Lore signs for it
+        conn.execute("INSERT INTO turnkey_wallets (person, email, created_ms, address, sub_org, ready)"
+                     " VALUES (?, 'a@example.com', 0, ?, 'sub-a', 1)", (person(ALICE), ALICE.address.lower()))
     out = env.svc.send(env.svc.prepare_buy(person(ALICE), 1))
     assert out["tx_hashes"] == ["0xhash0", "0xhash1"] and "transactions" not in out
     assert [t["description"] for t in env.svc.signer.txs] == ["USDC.approve", "Access.buy"]

@@ -80,6 +80,8 @@ def env(tmp_path):
     alice = person_of(ISS, "sub-alice")
     with svc.tx() as conn:
         conn.execute("INSERT INTO persons VALUES (?, ?)", ("0x" + "aa" * 20, alice))
+        conn.execute("INSERT INTO turnkey_wallets (person, email, created_ms, address, sub_org, ready)"
+                     " VALUES (?, 'a@example.com', 0, ?, 'sub-a', 1)", (alice, "0x" + "aa" * 20))  # Lore signs for it
     return type("Env", (), dict(app=app, svc=svc, fake=fake, clock=clock, alice=alice, client=TestClient(app)))
 
 
@@ -202,3 +204,30 @@ def test_credential_class_setting():
     assert parse_acr("selfie, selfie-face") == ("https://world.org/oidc/acr/selfie", "https://world.org/oidc/acr/selfie-face")
     with pytest.raises(ValueError):
         parse_acr("passport")
+
+
+# --- the local-signing fallback: a self-held wallet signs its own transactions, so no checkpoint applies ---
+from eth_account import Account as _Account
+from eth_account.messages import encode_defunct as _defunct
+
+DAVE = _Account.create()
+
+
+def test_self_held_wallet_gets_unsigned_transactions_and_no_checkpoint(env):
+    with env.svc.tx() as conn:
+        conn.execute("DELETE FROM turnkey_wallets")  # alice's wallet is now one Lore holds no key for
+    out = env.svc.checkpoint(env.alice, "pay 1 USDC for topic 1", env.svc.prepare_buy(env.alice, 1))
+    assert out["sign_locally"] and "human_approval_required" not in out
+    assert [t["description"] for t in out["transactions"]] == ["USDC.approve", "Access.buy"]
+    assert env.svc.signer.txs == []  # Lore signed nothing
+
+
+def test_link_wallet_needs_that_wallets_signature_over_that_person(env):
+    me = person_of(ISS, "sub-dave")
+    msg = env.svc.link_message(me, DAVE.address)
+    assert DAVE.address in msg and me in msg
+    other = _Account.create()
+    with pytest.raises(LoreError, match="not from this wallet"):
+        env.svc.link_wallet(me, DAVE.address, other.sign_message(_defunct(text=msg)).signature.to_0x_hex())
+    out = env.svc.link_wallet(me, DAVE.address, DAVE.sign_message(_defunct(text=msg)).signature.to_0x_hex())
+    assert out["wallets"] == [DAVE.address.lower()]
