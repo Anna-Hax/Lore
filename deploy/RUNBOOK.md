@@ -65,6 +65,12 @@ The gateway binds to `127.0.0.1:8080`. Caddy (`Caddyfile`) serves it over TLS an
 explorer is at `/app/`.
 Back up `secrets/` and `state/` off the host; `MASTER_KEY` loss loses all content.
 
+**Run one set of Lore services per deployment.** If two gateways or verifiers with roles watch the same
+contracts, whichever is faster acts first: another gateway's verifier fails submissions it never ingested.
+
+**Turnkey's free plan caps signing.** Every user transaction is a Turnkey signature; past the quota Turnkey
+answers 429 and every chain-changing tool fails ("Turnkey didn't sign …"). Use a paid plan for anything beyond a test.
+
 ## Redeploy
 
 ```sh

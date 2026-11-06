@@ -26,6 +26,25 @@ S2 and S4 were first answered from public reads; S1, S3, S5 and S6 ran against t
 - The gateway's `Signer` path was mined on 16602: `0x0d1959a16e7b9effba4139ded0382f4aab79913f6b7536e0b3bacb483c3a89bb`.
 - Not yet checked: whether the user can sign in to Turnkey with their email and revoke Lore.
 
+## End-to-end with Turnkey wallets (2026-11-07)
+
+`e2e/run.py` ran against the deployed contracts, with fresh service wallets that were granted roles. Every user transaction was signed by Turnkey.
+
+**Passed:**
+- Login, plus `lore_create_wallet` for four people: sub-orgs, policies, and the PersonRegistry link.
+- A new topic accepted (sub 8, which became node 6 in topic 3).
+- Two vote-gated follow-ups accepted (subs 9 and 11).
+- A near-copy failed by the verifier and voted down (sub 10), with its whole 10 USDC stake going to the treasury.
+
+**Stopped:** the run halted in the second topic. Turnkey answered 429 because the org was over its free signing quota. The market phase (buy, read, curator proof, leak trace, claim) did not run.
+
+**Found and fixed during the run:**
+- A new wallet wasn't usable until the indexer saw its registration.
+- `check_roles.py` crashed on the Turnkey key in `addresses.json`.
+- The e2e demo names clashed with an earlier run's wallets.
+
+**Found, operational:** a second set of Lore services running against the same contracts (a teammate's) reported first and failed our submission.
+
 ## Answers for P1
 
 **S2, provider lookup.** Read `getService(provider)` on 0G's Compute Inference
