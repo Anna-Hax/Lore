@@ -53,7 +53,8 @@ def main():
     providers = Providers(int(os.environ.get("ZG_PROVIDER_CHAIN_ID", 16661)))  # spike S2: 0G mainnet
     app = create_app(db_path, chain, content, storage, world=world, service_token=os.environ["LORE_SERVICE_TOKEN"],
                      public_url=os.environ["LORE_PUBLIC_URL"], provider_signer=lambda p: providers(p)[1],
-                     demo_login=os.environ.get("LORE_DEMO_LOGIN") == "1", site_dir=site_dir, chain_info=chain_info)
+                     demo_login=os.environ.get("LORE_DEMO_LOGIN") == "1", site_dir=site_dir, chain_info=chain_info,
+                     warm_overview=True)
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("LORE_PORT", 8080)))
 
 

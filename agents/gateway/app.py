@@ -112,7 +112,7 @@ def login_page(p: dict, demo: bool = False) -> str:
 def create_app(db_path: str, chain, content, storage, now=lambda: int(time.time()), *, world=None,
                service_token: str | None = None, public_url: str = "http://127.0.0.1:8080",
                provider_signer=None, demo_login: bool = False, site_dir: str | None = None,
-               chain_info: dict | None = None) -> FastAPI:
+               chain_info: dict | None = None, warm_overview: bool = False) -> FastAPI:
     """world: gateway.worldid.WorldID (None: nobody can log in, unless demo_login). service_token: the verifier/curator
     secret. demo_login: only when World ID is not configured, a clearly labelled name-based demo login (testnet demos)."""
     service = Service(db_path, chain, content, storage, now, provider_signer)
@@ -158,13 +158,29 @@ def create_app(db_path: str, chain, content, storage, now=lambda: int(time.time(
     overview_cache = {"at": 0.0, "data": None}
     overview_lock = threading.Lock()
 
+    def refresh_overview():
+        data = service.overview(chain_info or {}, chain.params(), public_url.rstrip("/") + "/mcp")
+        with overview_lock:
+            overview_cache["data"], overview_cache["at"] = data, time.time()
+        return data
+
+    if warm_overview:  # keep it fresh in the background: the first build downloads receipts from 0G Storage (slow)
+        def warm():
+            while True:
+                try:
+                    refresh_overview()
+                except Exception:  # RPC or storage blip: keep serving the last good copy
+                    pass
+                time.sleep(15)
+
+        threading.Thread(target=warm, daemon=True, name="overview-warmer").start()
+
     @app.get("/api/overview")
     def api_overview():
         with overview_lock:
-            if overview_cache["data"] is None or time.time() - overview_cache["at"] > 15:
-                overview_cache["data"] = service.overview(chain_info or {}, chain.params(), public_url.rstrip("/") + "/mcp")
-                overview_cache["at"] = time.time()
-            data = overview_cache["data"]
+            data, at = overview_cache["data"], overview_cache["at"]
+        if data is None or (not warm_overview and time.time() - at > 15):
+            data = refresh_overview()
         return JSONResponse(data, headers={"Access-Control-Allow-Origin": "*", "Cache-Control": "no-store"})
 
     # --- World ID login (the OAuth authorize step sends users here) ---
