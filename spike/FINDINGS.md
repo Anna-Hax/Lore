@@ -1,8 +1,19 @@
 # P3 spike findings
 
-Last updated 2026-11-06. **M0 is not complete.** S2 and S4 are answered from public
-reads. S1, S3, S5 and S6 still need a Router API key, a funded storage wallet or a
-built storage CLI. No model request, storage transaction or attestation has run.
+Last updated 2026-11-06 (evening). **All six S questions are answered live** (see "Live results" below).
+S2 and S4 were first answered from public reads; S1, S3, S5 and S6 ran against the real Router,
+0G Storage and providers with a private-mode Router key and a funded testnet wallet.
+
+## Live results (2026-11-06)
+
+| S item | Result |
+|---|---|
+| 1. Router from Python | **Works.** Private mode (`X-0G-Provider-Trust-Mode: private`, `verify_tee: true`) returns 200 in ~2 s. `ZG-Res-Key` is a response header. The provider was a **mainnet (16661)** service, confirming the catalogue match. `x_0g_trace` holds only `billing`, `provider`, `request_id`: **there is no `tee_verified` field**, so `zg` treats only an explicit `false` as a failure and relies on its own signer check. `glm-5.3` reasons before answering: tiny `max_tokens` returns empty content. |
+| 2. Signature + signer | **Works, with an E2EE caveat.** `GET {provider}/v1/proxy/signature/{chatID}?model=` returns `{text, signature, signing_address, signing_algo}`; the recovered signer equals the provider's on-chain `teeSignerAddress`. The Router always seals private requests (`x-0g-e2ee: sealed`; an `X-0G-E2EE` header does not change it), so `text` is `zg-sig-v1/e2ee-ct:<request hash>:<response hash>`, not the plaintext. The signature cannot be bound to the plaintext output client-side; receipts record `binding: e2ee-ciphertext` and proofs say so. |
+| 3. Signature retention | Signatures were available at 0, 5 and 15 minutes and gone (`chat_id_not_found`) by 30 minutes. Fetch and store them right after the call; `lore_check_proof` must rely on the stored receipt. |
+| 4. Embeddings | `qwen3-embedding-8b` works privately on `/v1/embeddings` (4096 dims), signed the same E2EE way by a mainnet provider. |
+| 5. Storage from Python | **Works.** The pinned CLI launcher builds with Go 1.24; `storage_roundtrip.py` passed on Galileo: 10.8 s upload (finalized), 1.6 s download with `--proof`. On Windows the CLI needs the profile env vars (fixed in `storage.py`). |
+| 6. Attestation | `0g-compute-cli@0.9.0` (`@0gfoundation/0g-compute-ts-sdk`) `inference verify` passed for the mainnet `qwen3-embedding-8b` provider: signer matches the contract, Docker Compose hash valid, exit 0. Its steps 6-8 (image digests, dstack verifier) are manual, so exit 0 covers the automated checks only. The CLI reads its key only from `~/.0g-compute-cli/config.json`; a throwaway key works for verification. Two other providers did not answer at the time. |
 
 ## Answers for P1
 
