@@ -149,6 +149,38 @@
   },
   {
     "type": "function",
+    "name": "nodeValue",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "priceOf",
+    "inputs": [
+      {
+        "name": "topicId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "roles",
     "inputs": [],
     "outputs": [
@@ -259,10 +291,10 @@
   },
   {
     "type": "function",
-    "name": "setTopicPrice",
+    "name": "setNodeValue",
     "inputs": [
       {
-        "name": "price",
+        "name": "value",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -298,19 +330,6 @@
         "name": "",
         "type": "bool",
         "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "topicPrice",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -393,10 +412,10 @@
   },
   {
     "type": "event",
-    "name": "TopicPriceSet",
+    "name": "NodeValueSet",
     "inputs": [
       {
-        "name": "price",
+        "name": "value",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -505,6 +524,17 @@
         "name": "topicId",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "Banned",
+    "inputs": [
+      {
+        "name": "wallet",
+        "type": "address",
+        "internalType": "address"
       }
     ]
   },
