@@ -25,6 +25,7 @@ from web3.exceptions import TimeExhausted
 
 import zg
 
+SCHEMA_VERSION = 2  # bump whenever a table changes shape
 MAX_ATTEMPTS = 12
 MAX_ZG_ATTEMPTS = 3  # a model run that fails verification may cost money on retry: give up sooner
 TRANSIENT = (httpx.TransportError, requests.ConnectionError, requests.Timeout, TimeExhausted, zg.ZGUnavailable)
@@ -60,7 +61,8 @@ class PaidCache:
 
 
 class Jobs:
-    def __init__(self, path: str, now=time.time):
+    def __init__(self, path: str, now=time.time, deployment: str | None = None):
+        """deployment: shared.deployment_key(...); when given, a job db from another deployment is refused."""
         self.now = now
         self.db = sqlite3.connect(path, timeout=30)
         self.db.row_factory = sqlite3.Row
@@ -69,6 +71,10 @@ class Jobs:
             CREATE TABLE IF NOT EXISTS jobs (id INT PRIMARY KEY, block INT, status TEXT DEFAULT 'pending',
                                              attempts INT DEFAULT 0, next_try INT DEFAULT 0, error TEXT);
         """)
+        if deployment:  # after the tables exist, so "already holds data" can be checked
+            from dbguard import bind
+
+            bind(self.db, deployment, SCHEMA_VERSION, "SELECT 1 FROM jobs LIMIT 1")
         self.paid = PaidCache(self.db)
 
     def pull(self, chain, event: str, key: str, start_block: int, batch: int = 2000) -> None:

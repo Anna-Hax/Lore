@@ -7,6 +7,7 @@ from web3 import Web3
 class FakeChain:
     def __init__(self):
         self.access, self.since, self.roles, self.sent, self.events = set(), {}, set(), [], []
+        self.persons = {}  # agent (lowercase) -> World ID person
         self.w3 = Web3
 
     def has_access(self, topic_id, addr):
@@ -37,6 +38,9 @@ class FakeChain:
 
     def topic_price(self):
         return self.price
+
+    def person_of(self, addr):
+        return self.persons.get(addr.lower())
 
     def submission_status(self, sub_id):
         return self.statuses.get(sub_id, "Pending")

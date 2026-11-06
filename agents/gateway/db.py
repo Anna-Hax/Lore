@@ -12,7 +12,8 @@ CREATE TABLE IF NOT EXISTS submissions (id INT PRIMARY KEY, topic_id INT, submit
                                         storage_root TEXT, status TEXT, passed INT, parents TEXT,
                                         report_hash TEXT, eligible INT, reported_at INT, node_id INT,
                                         submitted_at INT);
-CREATE TABLE IF NOT EXISTS votes       (sub_id INT, voter TEXT, approve INT, PRIMARY KEY (sub_id, voter));
+CREATE TABLE IF NOT EXISTS votes       (sub_id INT, voter TEXT, approve INT, person TEXT, PRIMARY KEY (sub_id, voter));
+CREATE TABLE IF NOT EXISTS persons     (agent TEXT PRIMARY KEY, person TEXT);
 CREATE TABLE IF NOT EXISTS purchases   (topic_id INT, buyer TEXT, PRIMARY KEY (topic_id, buyer));
 CREATE TABLE IF NOT EXISTS reports     (id INT PRIMARY KEY, topic_id INT, reporter TEXT, evidence_hash TEXT,
                                         matched_wallet TEXT, score_bps INT);
@@ -24,6 +25,16 @@ CREATE TABLE IF NOT EXISTS evidence    (hash TEXT PRIMARY KEY, topic_id INT, tex
 CREATE TABLE IF NOT EXISTS nonces      (message TEXT PRIMARY KEY, address TEXT, expires INT);
 CREATE TABLE IF NOT EXISTS tokens      (token TEXT PRIMARY KEY, address TEXT, expires INT);
 """
+
+
+SCHEMA_VERSION = 2  # bump whenever a table changes shape
+
+
+def bind_deployment(db, deployment: str) -> None:
+    """Fail fast if this gateway database was built for another deployment or an older schema."""
+    from dbguard import bind
+
+    bind(db, deployment, SCHEMA_VERSION, "SELECT 1 FROM seen LIMIT 1")
 
 
 def connect(path: str) -> sqlite3.Connection:

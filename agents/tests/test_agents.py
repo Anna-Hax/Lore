@@ -322,3 +322,13 @@ def test_existing_topic_without_a_summary_is_still_judged_as_existing():
     verify(7, gw=gw, embed=embed, llm=llm, upload_json=uploads()[1])
     sent = json.loads(llm.calls[0][0][1]["content"])
     assert sent["topic"] == {"title": None, "description": None} and sent["closest_nodes"] == ["Coalitions"]
+
+
+def test_a_job_db_from_another_deployment_is_refused(tmp_path):
+    from dbguard import WrongDatabase
+
+    path = str(tmp_path / "v.db")
+    Jobs(path, deployment="16602:0xaaa:1")
+    Jobs(path, deployment="16602:0xaaa:1")
+    with pytest.raises(WrongDatabase):
+        Jobs(path, deployment="16602:0xbbb:2")

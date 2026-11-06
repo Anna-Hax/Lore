@@ -32,7 +32,8 @@ def apply(db, event: str, a: dict, block: int, idx: int, ts: int) -> None:
               " WHERE id=?",
               (int(a["pass"]), json.dumps(list(a["parents"])), hexstr(a["reportHash"]), a["eligibleVoters"], ts, a["subId"]))
         case "Voted":
-            q("INSERT OR IGNORE INTO votes VALUES (?, ?, ?)", (a["subId"], a["voter"].lower(), int(a["approve"])))
+            q("INSERT OR IGNORE INTO votes VALUES (?, ?, ?, ?)",
+              (a["subId"], a["voter"].lower(), int(a["approve"]), hexstr(a["person"])))
         case "Finalized":
             q("UPDATE submissions SET status=?, node_id=? WHERE id=?",
               ("Accepted" if a["accepted"] else "Rejected", a["nodeId"] if a["accepted"] else None, a["subId"]))
@@ -49,6 +50,8 @@ def apply(db, event: str, a: dict, block: int, idx: int, ts: int) -> None:
         case "LeakReported":
             q("INSERT OR IGNORE INTO reports (id, topic_id, reporter, evidence_hash) VALUES (?, ?, ?, ?)",
               (a["reportId"], a["topicId"], a["reporter"].lower(), hexstr(a["evidenceHash"])))
+        case "AgentRegistered":
+            q("INSERT OR IGNORE INTO persons VALUES (?, ?)", (a["agent"].lower(), hexstr(a["person"])))
         case "LeakMatched":
             q("UPDATE reports SET matched_wallet=?, score_bps=? WHERE id=?",
               (a["wallet"].lower(), a["scoreBps"], a["reportId"]))

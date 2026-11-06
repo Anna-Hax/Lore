@@ -6,6 +6,7 @@ import threading
 import pytest
 from eth_account import Account
 from eth_account.messages import encode_defunct
+from eth_utils import keccak
 from fastapi.testclient import TestClient
 
 from consts import MAX_CHARS
@@ -19,11 +20,17 @@ ALICE, BOB, CAROL, VERIFIER = (Account.create() for _ in range(4))
 B32 = lambda h: bytes.fromhex(h.removeprefix("0x"))  # noqa: E731
 
 
+def person(acct) -> str:
+    """A stand-in World ID nullifier: one per test human."""
+    return "0x" + keccak(text="person:" + acct.address.lower()).hex()
+
+
 @pytest.fixture
 def env(tmp_path):
-    chain, storage, clock = FakeChain(), FakeStorage(), {"t": 1_000}
+    chain, storage, clock, world = FakeChain(), FakeStorage(), {"t": 1_000}, FakeWorld()
+    chain.persons = {a.address.lower(): person(a) for a in (ALICE, BOB, CAROL)}  # they have World IDs
     path = str(tmp_path / "gw.db")
-    client = TestClient(create_app(path, chain, FakeContent(), storage, now=lambda: clock["t"]))
+    client = TestClient(create_app(path, chain, FakeContent(), storage, now=lambda: clock["t"], world=world))
     db = connect(path)
     log = {"block": 0}
 
@@ -39,12 +46,28 @@ def env(tmp_path):
         return {"Authorization": f"Bearer {tok}"}
 
     return type("Env", (), dict(chain=chain, storage=storage, clock=clock, client=client, db=db, ev=ev,
-                                login=login, path=path))
+                                login=login, path=path, world=world))
+
+
+class FakeWorld:
+    """Stands in for gateway.worldid.WorldID: accepts {"person": ...} as a proof for whoever sends it."""
+
+    def request(self, agent):
+        return {"action": "lore-person", "signal": agent.lower()}
+
+    def verify(self, result, agent):
+        from gateway.worldid import WorldIDError
+
+        if "person" not in result:
+            raise WorldIDError("bad proof")
+        return result["person"]
 
 
 def seed(env):
     """Alice founds topic 1 (node 1); Bob then submits sub 2 to topic 1, which the verifier reports on."""
     c, a, b = env.client, env.login(ALICE), env.login(BOB)
+    for acct in (ALICE, BOB, CAROL):  # everyone in these tests has a World ID
+        env.ev("AgentRegistered", agent=acct.address, person=B32(person(acct)))
     s1 = c.post("/ingest", json={"text": "alice research"}, headers=a).json()
     env.ev("Submitted", subId=1, topicId=0, submitter=ALICE.address, contentHash=B32(s1["content_hash"]), storageRoot=B32(s1["storage_root"]))
     env.ev("Reported", subId=1, **{"pass": True}, parents=[], reportHash=B32("0x" + "00" * 32), eligibleVoters=0)
@@ -87,7 +110,7 @@ def test_contributor_must_vote_before_submitting(env):
     assert c.post("/ingest", json={"text": "alice again", "topic_id": 1}, headers=a).status_code == 409
     assert c.get("/vote-tasks", headers=b).json() == []  # submitter never votes on their own submission
 
-    env.ev("Voted", subId=2, voter=ALICE.address, approve=True)
+    env.ev("Voted", subId=2, voter=ALICE.address, person=B32(person(ALICE)), approve=True)
     assert c.get("/vote-tasks", headers=a).json() == []
     assert c.post("/ingest", json={"text": "alice again", "topic_id": 1}, headers=a).status_code == 200
 
@@ -346,3 +369,68 @@ def test_max_lag_tolerates_normal_indexing_jitter():
     galileo_block_seconds = 0.49  # measured on 0G Galileo
     # Between two index passes the chain moves SYNC_EVERY seconds; leave room for a slow pass too.
     assert MAX_LAG * galileo_block_seconds >= 5 * worker.SYNC_EVERY
+
+
+
+# --- World ID ---
+
+def test_ingest_requires_a_world_id(env):
+    nobody = Account.create()
+    r = env.client.post("/ingest", json={"text": "x"}, headers=env.login(nobody))
+    assert r.status_code == 403 and "World ID" in r.json()["detail"] and env.storage.blobs == {}
+
+
+def test_register_links_the_calling_agent_to_its_person_once(env):
+    agent = Account.create()
+    h = env.login(agent)
+    assert env.client.get("/identity/me", headers=h).json()["person"] is None
+    assert env.client.post("/identity/register", json={"nope": 1}, headers=h).status_code == 400
+    r = env.client.post("/identity/register", json={"person": person(ALICE)}, headers=h)  # alice's second agent
+    assert r.status_code == 200 and env.chain.sent[-1][:2] == ("PersonRegistry", "register")
+    assert env.chain.sent[-1][3] == B32(person(ALICE))
+
+    env.chain.persons[agent.address.lower()] = person(ALICE)  # the registration landed
+    sent = len(env.chain.sent)
+    assert env.client.post("/identity/register", json={"person": person(ALICE)}, headers=h).status_code == 200
+    assert len(env.chain.sent) == sent  # retry: no second transaction
+    assert env.client.post("/identity/register", json={"person": person(BOB)}, headers=h).status_code == 409
+
+
+def test_one_vote_per_person_across_their_agents(env):
+    a, _ = seed(env)
+    second = Account.create()  # alice's other agent
+    env.ev("AgentRegistered", agent=second.address, person=B32(person(ALICE)))
+    env.chain.persons[second.address.lower()] = person(ALICE)
+    env.chain.votable = {(2, ALICE.address.lower()), (2, second.address.lower())}
+    assert [t["sub_id"] for t in env.client.get("/vote-tasks", headers=env.login(second)).json()] == [2]
+    env.ev("Voted", subId=2, voter=second.address, person=B32(person(ALICE)), approve=True)
+    assert env.client.get("/vote-tasks", headers=a).json() == []  # her person already voted
+    assert env.client.post("/ingest", json={"text": "alice again", "topic_id": 1}, headers=a).status_code == 200
+
+
+def test_submitters_other_agents_get_no_vote_task_on_it(env):
+    seed(env)
+    bobs_second = Account.create()
+    env.ev("AgentRegistered", agent=bobs_second.address, person=B32(person(BOB)))
+    env.chain.votable = {(2, bobs_second.address.lower())}  # even if the chain view were stale
+    assert env.client.get("/vote-tasks", headers=env.login(bobs_second)).json() == []
+
+
+def test_a_database_from_another_deployment_or_an_older_version_is_refused(tmp_path):
+    import sqlite3
+
+    from dbguard import WrongDatabase
+    from gateway.db import bind_deployment
+
+    db = connect(str(tmp_path / "a.db"))
+    bind_deployment(db, "16602:0xaaa:1")
+    bind_deployment(db, "16602:0xaaa:1")  # same deployment: fine
+    with pytest.raises(WrongDatabase, match="belongs to"):
+        bind_deployment(db, "16602:0xbbb:2")  # P2 redeployed
+
+    old = sqlite3.connect(str(tmp_path / "old.db"))  # an older gateway's db, already used, never labeled
+    old.executescript("CREATE TABLE seen (block INT, idx INT); INSERT INTO seen VALUES (1, 0);"
+                      "CREATE TABLE votes (sub_id INT, voter TEXT, approve INT);")
+    old.commit()
+    with pytest.raises(WrongDatabase, match="older version"):
+        bind_deployment(connect(str(tmp_path / "old.db")), "16602:0xaaa:1")

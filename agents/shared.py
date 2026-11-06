@@ -26,3 +26,9 @@ def network(chain_id: int):
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod.get_network(chain_id)
+
+
+def deployment_key(chain_id: int) -> str:
+    """Identifies one deployment. Databases built for another deployment must not be reused."""
+    d = deployment(chain_id)
+    return f"{chain_id}:{d['contracts']['Submissions'].lower()}:{d['deployBlock']}"

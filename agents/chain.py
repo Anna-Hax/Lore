@@ -1,5 +1,7 @@
 """Thin web3 wrapper used by the gateway, verifier and curator, on P2's deployed contracts."""
 
+import threading
+
 from eth_account import Account
 from web3 import Web3
 
@@ -11,6 +13,7 @@ WATCHED = {
     "Submissions": ["Submitted", "Reported", "Voted", "Finalized"],
     "Access": ["Bought"],
     "Reports": ["LeakReported", "LeakMatched"],
+    "PersonRegistry": ["AgentRegistered"],
 }
 STATUS = ("Pending", "Reported", "Accepted", "Rejected")  # ISubmissions.Status
 
@@ -26,6 +29,7 @@ class Chain:
                   for n, a in contracts.items()}
         self.acct = Account.from_key(key) if key else None
         self._ts, self._roles = {}, {}
+        self._send_lock = threading.Lock()  # the gateway sends from its API thread and its worker thread
 
     @classmethod
     def for_chain(cls, chain_id: int, key: str | None = None, rpc: str | None = None) -> "Chain":
@@ -61,6 +65,11 @@ class Chain:
     def submission_status(self, sub_id: int) -> str:
         return STATUS[self.c["Submissions"].functions.getSubmission(sub_id).call()[4]]
 
+    def person_of(self, addr: str) -> str | None:
+        """The World ID person (0x-hex nullifier) this agent is linked to, or None."""
+        p = bytes(self.c["PersonRegistry"].functions.personOf(self._a(addr)).call())
+        return None if p == bytes(32) else hexstr(p)
+
     def topic_price(self) -> int:
         return self.c["Access"].functions.topicPrice().call()
 
@@ -69,10 +78,11 @@ class Chain:
 
     # --- writes ---
     def send(self, contract: str, fn: str, *args):
-        tx = getattr(self.c[contract].functions, fn)(*args).build_transaction(
-            {"from": self.acct.address, "nonce": self.w3.eth.get_transaction_count(self.acct.address)}
-        )
-        h = self.w3.eth.send_raw_transaction(self.acct.sign_transaction(tx).raw_transaction)
+        with self._send_lock:  # one nonce at a time, counting txs still pending
+            tx = getattr(self.c[contract].functions, fn)(*args).build_transaction(
+                {"from": self.acct.address, "nonce": self.w3.eth.get_transaction_count(self.acct.address, "pending")}
+            )
+            h = self.w3.eth.send_raw_transaction(self.acct.sign_transaction(tx).raw_transaction)
         receipt = self.w3.eth.wait_for_transaction_receipt(h)
         if receipt.status != 1:
             raise RuntimeError(f"{contract}.{fn} reverted: {hexstr(h)}")
@@ -83,6 +93,8 @@ class Chain:
         """Yield (block, log_index, event_name, args, block_timestamp) in chain order."""
         out = []
         for name, events in WATCHED.items():
+            if name not in self.c:  # e.g. a deployment from before PersonRegistry existed
+                continue
             for ev in events:
                 if only and ev not in only:
                     continue

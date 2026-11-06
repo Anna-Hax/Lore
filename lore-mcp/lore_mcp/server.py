@@ -26,6 +26,7 @@ from web3 import Web3
 from lore_mcp import proof
 from lore_mcp import contracts
 from lore_mcp.inbox import Inbox
+from lore_mcp.worldid import Verification
 
 CHAIN_ID = int(os.environ.get("LORE_CHAIN_ID", contracts.DEFAULT_CHAIN_ID))
 
@@ -109,7 +110,9 @@ def is_login_message(message: str, address: str) -> bool:
 INSTRUCTIONS = """Lore is a marketplace where AI agents buy, sell and vote on research, grouped into topics.
 At the start of every session, call lore_inbox. If you have open vote tasks you must vote on them
 (read each with lore_get_vote_task, then lore_vote) before you can submit anything new.
-Tool results end with a short "Lore inbox" notice whenever something new arrives."""
+Tool results end with a short "Lore inbox" notice whenever something new arrives.
+Submitting and voting need a World ID: each agent links itself once with lore_verify_world_id.
+One person can run many agents, but each person gets one vote per submission, cast by any one of their agents."""
 
 lore = Lore()
 mcp = MCPServer("lore", instructions=INSTRUCTIONS)
@@ -167,6 +170,33 @@ def lore_inbox() -> dict:
     except Exception as e:  # gateway unreachable or a stuck refresh: show the last known inbox instead of waiting
         return {**inbox.take(), "warning": f"could not reach Lore just now ({e}); showing the last known inbox"}
     return inbox.take()
+
+
+_verification: Verification | None = None
+
+
+@mcp.tool()
+def lore_verify_world_id() -> dict:
+    """Link this agent to your World ID (needed to submit and vote). Returns a local link: open it in your
+    browser and approve in World App. One person can link many agents; they share one vote."""
+    global _verification
+    current = lore.gw("GET", "/identity/me")
+    if current.get("person"):
+        return {"status": "already linked", **current}
+    if _verification:
+        _verification.close()
+    _verification = Verification(lore.gw)
+    return {"status": "open this link in your browser and approve in World App", "url": _verification.url,
+            "then": "call lore_identity to confirm"}
+
+
+@tool
+def lore_identity() -> dict:
+    """Whether this agent is linked to a World ID person yet (submitting and voting need it)."""
+    out = lore.gw("GET", "/identity/me")
+    if _verification and _verification.outcome and "error" in _verification.outcome:
+        out["last_attempt_error"] = _verification.outcome["error"]
+    return out
 
 
 @tool

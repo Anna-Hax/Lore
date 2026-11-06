@@ -27,6 +27,7 @@ MAX_LAG = 60      # blocks (~30 s at 0G's ~0.49 s blocks; worker.SYNC_EVERY is 3
                   # indexer is really behind, or the vote gate is blind; normal sync jitter stays well under it
 from gateway import auth, tasks
 from gateway.db import connect, synced_block
+from gateway.worldid import WorldIDError
 
 
 class NonceIn(BaseModel):
@@ -49,7 +50,8 @@ class LeakIn(BaseModel):
     text: str = Field(max_length=MAX_CHARS)
 
 
-def create_app(db_path: str, chain, content, storage, now=lambda: int(time.time())) -> FastAPI:
+def create_app(db_path: str, chain, content, storage, now=lambda: int(time.time()), world=None) -> FastAPI:
+    """world: a gateway.worldid.WorldID (None disables World ID registration)."""
     app = FastAPI(title="Lore gateway")
 
     def db():
@@ -179,8 +181,41 @@ def create_app(db_path: str, chain, content, storage, now=lambda: int(time.time(
             "latest_node": conn.execute("SELECT COALESCE(MAX(id), 0) FROM nodes").fetchone()[0],
         }
 
+    # --- World ID: one person, many agents, one vote ---
+    def need_world():
+        if world is None:
+            raise HTTPException(503, "World ID is not configured on this gateway")
+        return world
+
+    @app.get("/identity/me")
+    def identity_me(addr=Depends(caller)):
+        return {"agent": addr, "person": chain.person_of(addr)}
+
+    @app.get("/identity/request")
+    def identity_request(addr=Depends(caller)):
+        try:
+            return need_world().request(addr)
+        except NotImplementedError as e:
+            raise HTTPException(503, str(e)) from e
+
+    @app.post("/identity/register")
+    def identity_register(result: dict, addr=Depends(caller)):
+        """Verify a World ID proof made for the calling agent, then record agent -> person on-chain."""
+        try:
+            person = need_world().verify(result, addr)
+        except WorldIDError as e:
+            raise HTTPException(400, str(e)) from e
+        current = chain.person_of(addr)
+        if current and current != person:
+            raise HTTPException(409, "this agent is already linked to a different person")
+        if not current:
+            chain.send("PersonRegistry", "register", chain.w3.to_checksum_address(addr), bytes.fromhex(person[2:]))
+        return {"agent": addr, "person": person}
+
     @app.post("/ingest")
     def ingest(body: IngestIn, addr=Depends(caller), conn=DB):
+        if not chain.person_of(addr):  # the contract refuses unregistered submitters anyway; say so before staking
+            raise HTTPException(403, "verify your World ID first (lore_verify_world_id)")
         if chain.latest() - synced_block(conn) > MAX_LAG:
             raise HTTPException(503, "Lore is catching up with the chain; try again in a few seconds")
         if tasks.open_vote_tasks(conn, chain, addr, now()):  # the vote-before-submit gate lives here, server side

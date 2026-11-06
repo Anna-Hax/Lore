@@ -6,14 +6,22 @@ RPC per historical submission.
 """
 
 
+def person_of(db, addr: str) -> str | None:
+    row = db.execute("SELECT person FROM persons WHERE agent=?", (addr.lower(),)).fetchone()
+    return row["person"] if row else None
+
+
 def can_vote(db, chain, sub_id: int, addr: str) -> bool:
+    """One vote per person: a vote by any of this person's agents counts, and none on their own submission."""
     addr = addr.lower()
     s = db.execute("SELECT status, topic_id, submitter FROM submissions WHERE id=?", (sub_id,)).fetchone()
-    if not s or s["status"] != "Reported" or s["topic_id"] == 0 or s["submitter"] == addr:
+    if not s or s["status"] != "Reported" or s["topic_id"] == 0:
         return False
-    if db.execute("SELECT 1 FROM votes WHERE sub_id=? AND voter=?", (sub_id, addr)).fetchone():
+    person = person_of(db, addr)
+    if person and (person == person_of(db, s["submitter"])
+                   or db.execute("SELECT 1 FROM votes WHERE sub_id=? AND person=?", (sub_id, person)).fetchone()):
         return False
-    return chain.can_vote(sub_id, addr)  # live on-chain check: window, contributor-since, not voted
+    return chain.can_vote(sub_id, addr)  # live on-chain check: person, window, contributor-since, not voted
 
 
 def open_vote_tasks(db, chain, addr: str, now: int) -> list[dict]:
