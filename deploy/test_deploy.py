@@ -107,12 +107,13 @@ def test_attest_publishes_nothing_when_the_cli_fails(monkeypatch):
 
 def test_role_check_reports_missing_roles_and_gas():
     class Reader:
-        web3 = SimpleNamespace(eth=SimpleNamespace(get_balance=lambda address: 0 if address == "0xb" else 1))
+        web3 = SimpleNamespace(eth=SimpleNamespace(get_balance=lambda address: {"0xb": 0}.get(address, 1) if address.startswith("0x") else 1 / 0))
 
         def call(self, contract, method, *args):
             return args[1] != "0xc" if method == "hasRole" else method
 
-    good = check_roles.check(Reader(), {"gateway": "0xa", "verifier": "0xa", "curator": "0xa"})
+    good = check_roles.check(Reader(), {"gateway": "0xa", "verifier": "0xa", "curator": "0xa",
+                                       "turnkey_delegated_public_key": "03ab"})  # as create_secrets writes it
     assert good["ready"] is True
     bad = check_roles.check(Reader(), {"gateway": "0xa", "verifier": "0xb", "curator": "0xc"})
     assert bad["ready"] is False and bad["roles"]["curator"] is False and bad["funded"]["verifier"] is False
