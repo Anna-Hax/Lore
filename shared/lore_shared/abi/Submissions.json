@@ -428,8 +428,8 @@
       },
       {
         "name": "",
-        "type": "address",
-        "internalType": "address"
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
     "outputs": [
@@ -620,6 +620,12 @@
         "internalType": "address"
       },
       {
+        "name": "person",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
         "name": "approve",
         "type": "bool",
         "indexed": false,
@@ -668,6 +674,17 @@
     "type": "error",
     "name": "NotFinalizable",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotRegistered",
+    "inputs": [
+      {
+        "name": "agent",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
   },
   {
     "type": "error",

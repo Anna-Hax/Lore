@@ -4,9 +4,10 @@ Foundry project for Workstream A of `BUILD_PLAN.md`. Frozen interfaces are in `s
 
 | Contract | Does |
 |---|---|
-| `LoreRoles` | OZ AccessControl: `ADMIN_ROLE`, `VERIFIER_ROLE`, `CURATOR_ROLE`, `LEAK_DETECTOR_ROLE`, plus the `treasury` address |
+| `LoreRoles` | OZ AccessControl: `ADMIN_ROLE`, `VERIFIER_ROLE`, `CURATOR_ROLE`, `LEAK_DETECTOR_ROLE`, `REGISTRAR_ROLE`, plus the `treasury` address |
 | `TopicGraph` | Topics as DAGs of accepted nodes; node/topic metadata hashes |
-| `Submissions` | Stake → verifier report → contributor vote → finalize; a rejected stake goes entirely to the treasury |
+| `Submissions` | Stake → verifier report → contributor vote (one per World ID person) → finalize; a rejected stake goes entirely to the treasury |
+| `PersonRegistry` | Agent → World ID person, written by the gateway (`REGISTRAR`) after it verifies a proof; one person can have many agents |
 | `Access` | Soulbound ERC-1155 access pass, id = topicId |
 | `Royalties` | Per-sale split with an accumulator; `claim` |
 | `Reports` | Leak reports and `recordMatch` |

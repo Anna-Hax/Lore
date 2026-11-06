@@ -7,7 +7,7 @@ Standard library only.
 import json
 from pathlib import Path
 
-CONTRACTS = ["LoreRoles", "MockUSDC", "TopicGraph", "Submissions", "Access", "Royalties", "Reports"]
+CONTRACTS = ["LoreRoles", "MockUSDC", "TopicGraph", "Submissions", "Access", "Royalties", "Reports", "PersonRegistry"]
 
 root = Path(__file__).resolve().parent.parent
 out_dir = root.parent / "shared" / "lore_shared" / "abi"

@@ -11,6 +11,12 @@ contract SubmissionsTest is Base {
     address alice = makeAddr("alice");
     address bob = makeAddr("bob");
 
+    function setUp() public override {
+        super.setUp();
+        _ensurePerson(alice); // World ID: needed to submit, and to vote
+        _ensurePerson(bob);
+    }
+
     // ---------- submit ----------
 
     function test_submit_pullsStake() public {
@@ -331,9 +337,9 @@ contract SubmissionsTest is Base {
         (, address[] memory c, uint256 subId) = _openVote();
         assertTrue(subs.canVote(subId, c[1]));
         vm.expectEmit(address(subs));
-        emit ISubmissions.Voted(subId, c[1], false);
+        emit ISubmissions.Voted(subId, c[1], _personId(c[1]), false);
         _vote(c[1], subId, false);
-        assertEq(subs.voteOf(subId, c[1]), 2);
+        assertEq(subs.voteOf(subId, _personId(c[1])), 2);
         assertEq(subs.getSubmission(subId).no, 1);
     }
 

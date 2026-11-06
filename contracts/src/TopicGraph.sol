@@ -5,6 +5,7 @@ import {ITopicGraph} from "./interfaces/ILore.sol";
 import {LoreBase} from "./LoreBase.sol";
 import {LoreRoles} from "./LoreRoles.sol";
 import {Constants} from "./Constants.sol";
+import {PersonRegistry} from "./PersonRegistry.sol";
 
 interface IRoyaltiesNodeHook {
     function onNodeAdded(uint256 topicId, uint256 nodeId) external;
@@ -17,6 +18,8 @@ contract TopicGraph is ITopicGraph, LoreBase {
     address public submissions;
     /// @notice Notified on every new node so it can snapshot the royalty accumulator.
     address public royalties;
+    /// @notice agent -> person (World ID). Every contributor must be registered.
+    PersonRegistry public registry;
     uint256 public maxParents = Constants.MAX_PARENTS;
 
     uint256 public nextTopicId = 1;
@@ -31,9 +34,12 @@ contract TopicGraph is ITopicGraph, LoreBase {
     mapping(uint256 => uint256[]) private _topicNodes;
     mapping(uint256 => mapping(address => uint64)) private _contributorSince;
     mapping(uint256 => uint256) private _contributorCount;
+    mapping(uint256 => mapping(bytes32 => uint64)) private _personSince;
+    mapping(uint256 => uint256) private _personCount;
 
     event SubmissionsSet(address submissions);
     event RoyaltiesSet(address royalties);
+    event RegistrySet(address registry);
     event MaxParentsSet(uint256 maxParents);
 
     error UnknownTopic(uint256 topicId);
@@ -42,6 +48,7 @@ contract TopicGraph is ITopicGraph, LoreBase {
     error ParentNotInTopic(uint256 parentId);
     error DuplicateParent(uint256 parentId);
     error NotWired();
+    error NotRegistered(address agent);
 
     constructor(LoreRoles roles_) LoreBase(roles_) {}
 
@@ -57,6 +64,12 @@ contract TopicGraph is ITopicGraph, LoreBase {
         if (r == address(0)) revert ZeroAddress();
         royalties = r;
         emit RoyaltiesSet(r);
+    }
+
+    function setRegistry(address r) external onlyAdmin {
+        if (r == address(0)) revert ZeroAddress();
+        registry = PersonRegistry(r);
+        emit RegistrySet(r);
     }
 
     function setMaxParents(uint256 m) external onlyAdmin {
@@ -76,8 +89,10 @@ contract TopicGraph is ITopicGraph, LoreBase {
         uint256[] calldata parents
     ) external returns (uint256 topicIdOut, uint256 nodeId) {
         if (msg.sender != submissions) revert NotAuthorized();
-        if (royalties == address(0)) revert NotWired();
+        if (royalties == address(0) || address(registry) == address(0)) revert NotWired();
         if (contributor == address(0)) revert ZeroAddress();
+        bytes32 person = registry.personOf(contributor);
+        if (person == bytes32(0)) revert NotRegistered(contributor);
 
         if (topicId == 0) {
             topicIdOut = nextTopicId++;
@@ -104,6 +119,10 @@ contract TopicGraph is ITopicGraph, LoreBase {
         if (_contributorSince[topicIdOut][contributor] == 0) {
             _contributorSince[topicIdOut][contributor] = uint64(block.timestamp);
             _contributorCount[topicIdOut]++;
+        }
+        if (_personSince[topicIdOut][person] == 0) {
+            _personSince[topicIdOut][person] = uint64(block.timestamp);
+            _personCount[topicIdOut]++;
         }
 
         IRoyaltiesNodeHook(royalties).onNodeAdded(topicIdOut, nodeId);
@@ -175,6 +194,16 @@ contract TopicGraph is ITopicGraph, LoreBase {
     /// @inheritdoc ITopicGraph
     function contributorCount(uint256 topicId) external view returns (uint256) {
         return _contributorCount[topicId];
+    }
+
+    /// @inheritdoc ITopicGraph
+    function personSince(uint256 topicId, bytes32 person) external view returns (uint64) {
+        return _personSince[topicId][person];
+    }
+
+    /// @inheritdoc ITopicGraph
+    function personCount(uint256 topicId) external view returns (uint256) {
+        return _personCount[topicId];
     }
 
     /// @inheritdoc ITopicGraph
