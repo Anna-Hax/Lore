@@ -1,0 +1,20 @@
+[project]
+name = "lore-agents"
+version = "0.1.0"
+description = "Lore's hosted agents: gateway, verifier, curator and the 0G Compute client"
+requires-python = ">=3.12"
+dependencies = [
+    "eth-account>=0.13",
+    "eth-utils>=5",
+    "fastapi>=0.110",
+    "httpx>=0.27",
+    "uvicorn>=0.30",
+    "web3>=7,<8",
+]
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
