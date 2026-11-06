@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-/// @notice Default values from BUILD_PLAN.md section 3.1, mirrored in packages/shared/src/constants.js.
+/// @notice Default values from BUILD_PLAN.md section 3.1, mirrored in shared/lore_shared/constants.py (P3).
 /// @dev These are only the initial values. Every on-chain one is stored in its contract and
 ///      settable by ADMIN, so changing a value never needs a redeploy. USDC has 6 decimals.
 library Constants {

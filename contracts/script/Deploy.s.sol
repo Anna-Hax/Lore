@@ -12,7 +12,7 @@ import {Royalties} from "../src/Royalties.sol";
 import {Reports} from "../src/Reports.sol";
 
 /// @notice Deploys every Lore contract, wires them, grants roles and writes
-///         packages/shared/src/deployments/<chainId>.json.
+///         shared/lore_shared/deployments/<chainId>.json.
 ///
 /// Env:
 ///   DEPLOYER_PRIVATE_KEY   required (on anvil it defaults to anvil account #0)
@@ -21,7 +21,7 @@ import {Reports} from "../src/Reports.sol";
 ///   LEAK_DETECTOR          the gateway agent's wallet; it calls recordMatch (default: deployer)
 ///   USDC                   existing USDC address; if unset, a MockUSDC is deployed
 ///
-/// Then run `node script/export-abi.mjs` to refresh packages/shared/src/abi/.
+/// Then run `python script/export_abi.py` to refresh shared/lore_shared/abi/.
 contract Deploy is Script {
     // Anvil's well-known account #0. Only ever used when chainid == 31337.
     uint256 internal constant ANVIL_KEY_0 = 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
@@ -102,7 +102,7 @@ contract Deploy is Script {
         string memory json = vm.serializeString(o, "contracts", contractsJson);
 
         string memory path =
-            string.concat(vm.projectRoot(), "/../packages/shared/src/deployments/", vm.toString(block.chainid), ".json");
+            string.concat(vm.projectRoot(), "/../shared/lore_shared/deployments/", vm.toString(block.chainid), ".json");
         vm.writeJson(json, path);
         console2.log("Wrote", path);
     }

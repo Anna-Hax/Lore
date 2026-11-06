@@ -11,11 +11,11 @@ remappings = [
   "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
   "forge-std/=lib/forge-std/src/",
 ]
-# Deploy.s.sol writes addresses to packages/shared/src/deployments/<chainId>.json
-fs_permissions = [{ access = "read-write", path = "../packages/shared/src/deployments" }]
+# Deploy.s.sol writes addresses to shared/lore_shared/deployments/<chainId>.json
+fs_permissions = [{ access = "read-write", path = "../shared/lore_shared/deployments" }]
 
 [lint]
-# Lowercase immutables keep the generated getters readable from JS (usdc(), graph(), roles()).
+# Lowercase immutables keep the generated getters readable from Python (usdc(), graph(), roles()).
 exclude_lints = ["screaming-snake-case-immutable", "mixed-case-function"]
 
 [fuzz]
@@ -27,6 +27,6 @@ depth = 64
 fail_on_revert = false
 
 [rpc_endpoints]
-# From the official 0G docs (Galileo testnet, chain ID 16602). See packages/shared/src/network.js.
+# From the official 0G docs (Galileo testnet, chain ID 16602). See shared/lore_shared/network.py.
 og_testnet = "https://evmrpc-testnet.0g.ai"
 anvil = "http://127.0.0.1:8545"
