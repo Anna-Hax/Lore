@@ -53,6 +53,14 @@ class FakeChain:
     def prepare(self, contract, fn, sender, *args):
         return {"from": sender, "to": self.address(contract), "description": f"{contract}.{fn}", "args": list(args)}
 
+    chain_id = 16602
+
+    def selector(self, contract, fn):
+        return "0x" + (contract + fn).encode().hex()[:8]
+
+    def balances(self, addr):
+        return {"native_wei": 0, "usdc": 0}
+
     def person_of(self, addr):
         return self.persons.get(addr.lower())
 

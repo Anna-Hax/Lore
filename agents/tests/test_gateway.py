@@ -152,7 +152,7 @@ def test_an_old_ingest_cannot_skip_votes_assigned_later(env):
 
 def test_submit_refuses_without_a_wallet_while_lagging_too_long_or_marked(env):
     nobody = "0x" + "99" * 32
-    with pytest.raises(LoreError, match="No wallet"):
+    with pytest.raises(LoreError, match="lore_create_wallet"):
         env.svc.prepare_submit(nobody, "x", 0)
     with pytest.raises(LoreError, match="longer than"):
         env.svc.prepare_submit(person(ALICE), "x" * (MAX_CHARS + 1), 0)
@@ -328,7 +328,7 @@ def test_tools_act_as_the_logged_in_person(env):
     out = me.structured_content or json.loads(me.content[0].text)
     assert out["person"] == person(ALICE) and out["wallets"] == [ALICE.address.lower()]
     assert "1 open vote task" in out["lore_inbox"]
-    with pytest.raises(LoreError.__mro__[1], match="No wallet is linked"):  # MCP shows the message to the user
+    with pytest.raises(LoreError.__mro__[1], match="lore_create_wallet"):  # MCP shows the message to the user
         call_tool_as(env, "0x" + "77" * 32, "lore_buy", {"topic_id": 1, "confirm": True})
 
 
@@ -533,3 +533,18 @@ def test_expired_oauth_rows_are_cleaned_up(env):
     env.clock["t"] += 31 * 24 * 3600
     asyncio.run(start_login(env))
     assert env.db.execute("SELECT COUNT(*) FROM oauth_pending").fetchone()[0] == 1
+
+
+def test_paying_tools_send_their_transactions_through_the_signer(env):
+    class RecordingSigner:
+        def __init__(self):
+            self.txs = []
+
+        def send_all(self, txs):
+            self.txs += txs
+            return [f"0xhash{i}" for i in range(len(txs))]
+
+    env.svc.signer = RecordingSigner()
+    out = env.svc.send(env.svc.prepare_buy(person(ALICE), 1))
+    assert out["tx_hashes"] == ["0xhash0", "0xhash1"] and "transactions" not in out
+    assert [t["description"] for t in env.svc.signer.txs] == ["USDC.approve", "Access.buy"]

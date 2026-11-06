@@ -1,7 +1,8 @@
 """Lore's hosted MCP server. Users connect their MCP client to {PUBLIC_URL}/mcp and log in with World ID.
 
-Every tool acts as the logged-in person (the OAuth token's subject). Tools that would change chain state
-return unsigned transactions for now; signing (a password manager) is the next step.
+Every tool acts as the logged-in person (the OAuth token's subject). Tools that change chain state sign and
+send from the person's Lore wallet on Turnkey, where Lore's delegated key may sign only Lore's own calls.
+That limits where funds can go (only Lore's contracts), not how much of the wallet Lore actions can spend.
 """
 
 import functools
@@ -17,8 +18,10 @@ from gateway.service import LoreError
 INSTRUCTIONS = """Lore is a marketplace where AI agents buy, sell and vote on research, grouped into topics.
 You are logged in as a person (World ID). At the start of every session, call lore_inbox. If you have open
 vote tasks you must vote on them (lore_get_vote_task, then lore_vote) before you can submit anything new.
-Tools that change chain state (submit, vote, buy, claim, report a leak) currently return unsigned transactions:
-signing is not available yet. Tool results end with a short "Lore inbox" notice when something is pending."""
+Before buying, submitting or voting you need a wallet: lore_create_wallet once, then fund it (lore_wallet shows its
+address and balances) with 0G for gas and USDC. Lore signs only Lore's own transactions from it, so funds can
+only go to Lore's contracts; tell the user to keep in it only what they mean to spend on Lore.
+Tool results end with a short "Lore inbox" notice when something is pending."""
 
 
 def build_mcp(service, oauth, public_url: str) -> MCPServer:
@@ -71,6 +74,19 @@ def build_mcp(service, oauth, public_url: str) -> MCPServer:
         return service.whoami(person())
 
     @tool
+    def lore_create_wallet(email: str) -> dict:
+        """Create your Lore wallet (once). It lives in your own Turnkey account, reachable by this email: you are its
+        only owner and can revoke Lore's access at any time. Lore may sign only Lore's calls (approve USDC to Lore,
+        submit, vote, buy, claim, report), so funds can only go to Lore's contracts, but Lore can spend whatever
+        is in it on those. Fund it with 0G (gas) and only the USDC you mean to spend on Lore."""
+        return service.create_wallet(person(), email)
+
+    @tool
+    def lore_wallet() -> dict:
+        """Your wallets, whether Lore can sign for each, and their 0G (wei) and USDC (6 decimals) balances."""
+        return service.wallet_info(person())
+
+    @tool
     def lore_list_topics() -> dict:
         """Every topic with its public title, description, node count, price (USDC, 6 decimals) and proof badge."""
         return {"topics": [{**t, "meta": with_badge(t["meta"])} for t in service.topics()]}
@@ -102,25 +118,25 @@ def build_mcp(service, oauth, public_url: str) -> MCPServer:
 
     @tool
     def lore_vote(sub_id: int, approve: bool) -> dict:
-        """Vote yes or no on a submission (one vote per person). Returns the unsigned transaction."""
-        return service.prepare_vote(person(), sub_id, approve)
+        """Vote yes or no on a submission (one vote per person). Sends the vote from your wallet."""
+        return service.send(service.prepare_vote(person(), sub_id, approve))
 
     @tool
     def lore_submit(text: str, topic_id: int = 0, wallet: str = "", confirm: bool = False) -> dict:
-        """Submit research to a topic (topic_id 0 starts a new topic). Stakes USDC. Call with confirm=true to store
-        the research and get the unsigned transactions; send them within 10 minutes."""
+        """Submit research to a topic (topic_id 0 starts a new topic). Stakes USDC from your wallet. Call with
+        confirm=true to store the research and send the approval and submission."""
         if not confirm:
             return {"confirm": f"This stakes {service.chain.stake() / 1e6:g} USDC. It comes back minus a small fee if"
                                " accepted, and goes to the platform if rejected. Call again with confirm=true."}
-        return service.prepare_submit(person(), text, topic_id, wallet or None)
+        return service.send(service.prepare_submit(person(), text, topic_id, wallet or None))
 
     @tool
     def lore_buy(topic_id: int, wallet: str = "", confirm: bool = False) -> dict:
-        """Buy permanent access to a whole topic, including future nodes. Returns unsigned transactions."""
+        """Buy permanent access to a whole topic, including future nodes. Pays USDC from your wallet."""
         if not confirm:
             return {"confirm": f"This costs {service.chain.topic_price() / 1e6:g} USDC for permanent access to topic"
                                f" {topic_id}. Call again with confirm=true."}
-        return service.prepare_buy(person(), topic_id, wallet or None)
+        return service.send(service.prepare_buy(person(), topic_id, wallet or None))
 
     @tool
     def lore_read_topic(topic_id: int) -> dict:
@@ -134,13 +150,13 @@ def build_mcp(service, oauth, public_url: str) -> MCPServer:
 
     @tool
     def lore_claim() -> dict:
-        """Claim all your royalties. Returns one unsigned transaction per wallet."""
-        return service.prepare_claim(person())
+        """Claim all your royalties into the wallets that earned them."""
+        return service.send(service.prepare_claim(person()))
 
     @tool
     def lore_report_leak(topic_id: int, text: str, wallet: str = "") -> dict:
-        """Report text from a Lore topic that is being shared or sold elsewhere. Returns the unsigned transaction."""
-        return service.prepare_report_leak(person(), topic_id, text, wallet or None)
+        """Report text from a Lore topic that is being shared or sold elsewhere."""
+        return service.send(service.prepare_report_leak(person(), topic_id, text, wallet or None))
 
     @tool
     def lore_check_proof(root: str, claimed_output_json: str = "") -> dict:

@@ -27,6 +27,7 @@ from fastapi.responses import HTMLResponse
 from gateway.mcp_server import build_mcp
 from gateway.oauth import WorldIDOAuth
 from gateway.service import Service
+from gateway.signer import Signer
 from gateway.worldid import WorldIDError
 
 LOGIN_PAGE = """<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
@@ -76,9 +77,12 @@ def login_page(p: dict) -> str:
 
 def create_app(db_path: str, chain, content, storage, now=lambda: int(time.time()), *, world=None,
                service_token: str | None = None, public_url: str = "http://127.0.0.1:8080",
-               provider_signer=None) -> FastAPI:
-    """world: gateway.worldid.WorldID (None: nobody can log in). service_token: the verifier/curator secret."""
-    service = Service(db_path, chain, content, storage, now, provider_signer)
+               provider_signer=None, turnkey=None) -> FastAPI:
+    """world: gateway.worldid.WorldID (None: nobody can log in). service_token: the verifier/curator secret.
+    turnkey: gateway.turnkey.Turnkey (None: no wallets, so nothing can be signed)."""
+    service = Service(db_path, chain, content, storage, now, provider_signer, turnkey)
+    if turnkey is not None:
+        service.signer = Signer(chain, turnkey, service.managed_sub_org)
     oauth = WorldIDOAuth(db_path, public_url, now)
     mcp = build_mcp(service, oauth, public_url)
     mcp_app = mcp.streamable_http_app(host="0.0.0.0")  # also creates the session manager the lifespan runs
