@@ -58,7 +58,10 @@ def build_mcp(service, oauth, public_url: str) -> MCPServer:
         if not m.get("receipt"):
             return {**m, "proof": "[no proof]"}
         claim = {"title": m.get("title"), "description": m.get("description")}
-        return {**m, "proof": proof.badge(service.receipt(m["receipt"]), claim)}
+        try:
+            return {**m, "proof": proof.badge(service.receipt(m["receipt"]), claim)}
+        except Exception:  # 0G Storage read failed just now: show the root, let the user re-check later
+            return {**m, "proof": f"[proof unavailable right now; check it with lore_check_proof {m['receipt']}]"}
 
     @mcp.tool()
     def lore_inbox() -> dict:

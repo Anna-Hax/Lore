@@ -238,7 +238,11 @@ class Scenario:
 
     async def node_meta(self, topic_id: int, node_id: int) -> dict:
         async def titled():
-            t = await self.a["ada"].tool("lore_get_topic", topic_id=topic_id)
+            try:
+                t = await self.a["ada"].tool("lore_get_topic", topic_id=topic_id)
+            except RuntimeError as e:  # e.g. a 0G Storage read failed just now
+                say(f"retrying lore_get_topic: {e}")
+                return None
             n = next((n for n in t["nodes"] if n["node_id"] == node_id), None)
             return n if n and n.get("meta") and n["meta"].get("title") else None
 

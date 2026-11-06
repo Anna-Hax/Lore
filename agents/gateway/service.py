@@ -129,7 +129,16 @@ class Service:
             } for n in nodes]}
 
     def receipt(self, root: str) -> dict:
-        return json.loads(self.storage.download(root))
+        """An InferenceReceipt from 0G Storage. Immutable (content-addressed), so cached; one retry on a flaky read."""
+        cache = self.__dict__.setdefault("_receipts", {})
+        if root not in cache:
+            try:
+                raw = self.storage.download(root)
+            except Exception:
+                time.sleep(1)
+                raw = self.storage.download(root)
+            cache[root] = json.loads(raw)
+        return cache[root]
 
     # --- voting ---
     def vote_tasks(self, person: str) -> list[dict]:

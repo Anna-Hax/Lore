@@ -215,11 +215,11 @@ def test_curator_remembers_its_own_writes_when_the_gateway_lags(tmp_path):
     assert topic_call["current"]["title"] == "Topic v1" and r["topic_meta"]["node_count"] == 2
 
 
-def test_curator_retries_once_then_gives_up_on_bad_output():
+def test_curator_retries_with_feedback_then_gives_up_on_bad_output():
     r = curate(4, gw=CuratorGW([4]), llm=FakeLLM(meta(n=50), meta(), meta()), upload_json=uploads()[1])
     assert len(r["node_meta"]["description"]) == 350
-    with pytest.raises(BadMeta):
-        curate(4, gw=CuratorGW([4]), llm=FakeLLM("not json", meta(n=900)), upload_json=uploads()[1])
+    with pytest.raises(BadMeta):  # three bad answers in a row
+        curate(4, gw=CuratorGW([4]), llm=FakeLLM("not json", meta(n=900), meta(n=650)), upload_json=uploads()[1])
 
 
 def test_curator_skips_nodes_that_already_have_metadata(tmp_path):
