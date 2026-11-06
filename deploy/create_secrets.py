@@ -4,6 +4,7 @@ Each service gets its own storage wallet, because concurrent uploads from one
 wallet would race on nonces. ZG_API_KEY starts blank: launch.py refuses to start
 until the operator adds a key created with trust_mode "private". Likewise
 TURNKEY_API_PRIVATE_KEY, which Turnkey issues for Lore's parent organization.
+WORLD_RP_SIGNING_KEY also starts blank: use the key registered for Lore's World RP.
 Lore's delegated Turnkey key is generated here: its public half goes in
 addresses.json (set it as TURNKEY_DELEGATED_PUBLIC_KEY); it is not secret.
 """
@@ -34,6 +35,7 @@ def create(directory: Path) -> dict:
             "MASTER_KEY": secrets.token_hex(32), "WM_SECRET": secrets.token_hex(32),
             "LORE_GATEWAY_KEY": key("gateway"), "ZG_STORAGE_PRIVATE_KEY": key("gateway_storage"),
             "LORE_SERVICE_TOKEN": service_token, "TURNKEY_API_PRIVATE_KEY": "",
+            "WORLD_RP_SIGNING_KEY": "",
             "TURNKEY_DELEGATED_PRIVATE_KEY": format(delegated.private_numbers().private_value, "064x"),
         },
         "verifier.env": {"LORE_VERIFIER_KEY": key("verifier"), "ZG_API_KEY": "", "ZG_STORAGE_PRIVATE_KEY": key("verifier_storage"),

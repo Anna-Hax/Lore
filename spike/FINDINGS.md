@@ -91,3 +91,48 @@ uv run --project shared --locked --group platform python spike/storage_roundtrip
 Exit 0 from preflight means ready, not passed. Never paste keys into a command,
 chat or evidence file. `spike/evidence/` is committed, so raw live output with
 anything sensitive belongs in the ignored `spike/local-evidence/`.
+
+## World ID (W1-W4), 2026-11-06
+
+**Login does not work yet on `main`.** It fails at three separate points, in this order, and each one
+alone blocks every real login. All three are in P1's files, so they are listed here and not fixed.
+
+| # | Where | Failure |
+|---|---|---|
+| 1 | `gateway/worldid.py` `rp_context()` | Raises `NotImplementedError`, so `/login/request` returns 503. The port is ready (W1). |
+| 2 | `gateway/app.py` login page | `IDKit.request` omits `allow_legacy_proofs`. The SDK throws `allow_legacy_proofs is required`. |
+| 3 | `gateway/app.py` login page | `pollUntilCompletion()` returns `{success, result}` and the page posts all of it. `verify` then rejects it as "proof is for a different action". Post `.result`, and show `.error` when `success` is false. |
+
+Deployment gaps (P3) **fixed**: `deploy/launch.py` now requires `WORLD_RP_SIGNING_KEY`
+from the gateway-only mounted secret file, and `create_secrets.py` leaves an explicit
+blank placeholder for the operator's registered RP key. The key is not placed in
+Compose's public environment. `WORLD_IDKIT_MODULE` defaults to the pinned 4.6.0
+ESM URL below. Existing installations must add the key before restart; see
+[`deploy/RUNBOOK.md`](../deploy/RUNBOOK.md). This does not resolve the P1 login
+failures above or constitute a live browser/World verification.
+
+| Item | Status | Result |
+|---|---|---|
+| W1 signing | **Answered offline** | [`world_rp.py`](world_rp.py) is byte-identical to `signRequest` in `@worldcoin/idkit-core@4.6.0`, and the real SDK accepts its `rp_context`. Not yet accepted by World: that needs a registered key. |
+| W1 module | **Partly answered** | Use `https://cdn.jsdelivr.net/npm/@worldcoin/idkit-core@4.6.0/+esm`: it exports `IDKit` and the presets. `dist/index.js` imports bare and `.cjs` paths, and `idkit.global.js` is not a module. jsDelivr says not to use SRI on `+esm`, so self-hosting a bundle is safer for a login page. Not loaded in a browser yet. |
+| W2 device | **Answered from source** | `deviceLegacy` exists and asks World App for `verification_level: device`. 4.0 has no device credential (`proof_of_human`, `selfie`, `passport`, `mnc`), so device is 3.0 only. The page asks only for `orbLegacy` today. Whether `deviceLegacy` also accepts Orb users is unconfirmed. |
+| W3 signal hash | **Answered** | `keccak256(bytes) >> 8`, which matches the gateway for login ids. A `0x`-hex signal is hashed as bytes, not text, so the gateway's `signal_hash` would be wrong if a wallet address became the signal again. |
+| W3 nullifier across signals | **Expected, not run** | The docs say one person and one action give one nullifier. |
+| W3 Orb vs device | **Answered from source, 3.0 only** | WalletKit's test asserts a device proof has the same nullifier as the Orb one, "to maintain a single representation of the user". Not checked with a real account. |
+| W3 3.0 vs 4.0 | **Risk** | World's migration guide says "Track both nullifiers", so they should be treated as different. `proofOfHuman` can return either, which would give one human two person ids. Keep the gateway on 3.0 proofs only, as it is today, until there is a mapping. |
+| W4 repeat proofs | **Open, and the main design risk** | Lore proves the same action at every login. World's docs call that "an anti-pattern" and point to session proofs. WalletKit's 4.0 path refuses a reused nullifier 10 minutes after first use, for a year, unless the RP is on a whitelist (WIP-113, empty by default). Its 3.0 path has no such guard, so 3.0 logins may repeat, but whether World's API or the action settings allow it is unconfirmed. |
+| Environment | **Open, security** | The gateway forwards the browser's `environment` to World. The docs do not say a production app refuses `staging`. If it does not, free simulator identities become Lore people. Pin it on the server whatever World does. |
+
+**How this was tested.** [`world/driver.mjs`](world/driver.mjs) runs the real SDK against a local bridge, which IDKit
+allows for `app_staging_` apps. Its replies are simulated, so [the evidence](evidence/world-idkit-4.6.0.json) shows the
+SDK's request and result shapes, never a real proof. One POST to `/api/v4/verify/rp_00000000000000ab` with no responses
+returned a 400 `validation_error`, so the endpoint is live; nothing about Lore's app has been tested at World.
+
+Run offline, from `agents/`: `uv run pytest ../spike/test_world_id.py` (needs `npm ci --ignore-scripts` in `spike/world`).
+Each `xfail` is a gap above and fails once it is fixed, so the mark gets removed with the fix.
+Run live with [`world_live.py`](world_live.py) once the app is registered. It covers W1, W3 and W4.
+
+Sources: `@worldcoin/idkit-core` 4.6.0 and `@worldcoin/idkit-server` 1.2.0 (npm),
+[WalletKit](https://github.com/worldcoin/walletkit) `crates/walletkit-core` at `main` (`v3/world_id.rs`,
+`storage/cache/nullifiers.rs`, `authenticator/mod.rs`), and docs.world.org pages `world-id/4-0-migration`,
+`world-id/idkit/session-proofs`, `world-id/idkit/signatures` and `api-reference/developer-portal/verify`.

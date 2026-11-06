@@ -12,7 +12,7 @@ import re
 REQUIRED = {
     # TURNKEY_*_PRIVATE_KEY: Lore's Turnkey parent-org key and its delegated key in users' wallets (gateway/turnkey.py).
     "gateway": {"MASTER_KEY", "WM_SECRET", "LORE_GATEWAY_KEY", "ZG_STORAGE_PRIVATE_KEY", "LORE_SERVICE_TOKEN",
-                "TURNKEY_API_PRIVATE_KEY", "TURNKEY_DELEGATED_PRIVATE_KEY"},
+                "TURNKEY_API_PRIVATE_KEY", "TURNKEY_DELEGATED_PRIVATE_KEY", "WORLD_RP_SIGNING_KEY"},
     "verifier": {"LORE_VERIFIER_KEY", "ZG_API_KEY", "ZG_STORAGE_PRIVATE_KEY", "LORE_SERVICE_TOKEN"},
     "curator": {"LORE_CURATOR_KEY", "ZG_API_KEY", "ZG_STORAGE_PRIVATE_KEY", "LORE_SERVICE_TOKEN"},
 }
