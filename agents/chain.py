@@ -86,6 +86,13 @@ class Chain:
                 "to": self.c[contract].address, "value": 0, "data": self.c[contract].encode_abi(fn, args=list(args)),
                 "description": f"{contract}.{fn}"}
 
+    def params(self) -> dict:
+        """Live economic parameters (all settable by ADMIN), for the public explorer."""
+        sub, acc, roy = self.c["Submissions"].functions, self.c["Access"].functions, self.c["Royalties"].functions
+        return {"stake": sub.stake().call(), "stake_fee": sub.stakeFee().call(), "topic_price": acc.topicPrice().call(),
+                "platform_cut_bps": roy.platformCutBps().call(), "quorum_bps": sub.quorumBps().call(),
+                "voting_window": sub.votingWindow().call()}
+
     def topic_price(self) -> int:
         return self.c["Access"].functions.topicPrice().call()
 
