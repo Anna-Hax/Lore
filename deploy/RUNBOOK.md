@@ -1,7 +1,7 @@
 # Lore hosting runbook
 
-Runs the gateway, verifier and curator on one Docker host. Users run `lore-mcp`
-themselves. Status: the compose file and image are not yet run on a real host.
+Runs the gateway, verifier and curator on one Docker host. The gateway is also the hosted MCP server
+users connect to (`$LORE_PUBLIC_URL/mcp`, World ID login). Status: the compose file and image are not yet run on a real host.
 
 ## Before the first deploy
 

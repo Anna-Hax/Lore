@@ -20,13 +20,17 @@ def create(directory: Path) -> dict:
     directory.mkdir(mode=0o700)  # Existing directories are deliberately refused.
     accounts = {name: Account.create() for name in WALLETS}
     key = lambda name: accounts[name].key.hex()  # noqa: E731
+    service_token = secrets.token_hex(32)  # shared by gateway, verifier and curator for /internal/*
     files = {
         "gateway.env": {
             "MASTER_KEY": secrets.token_hex(32), "WM_SECRET": secrets.token_hex(32),
             "LORE_GATEWAY_KEY": key("gateway"), "ZG_STORAGE_PRIVATE_KEY": key("gateway_storage"),
+            "LORE_SERVICE_TOKEN": service_token,
         },
-        "verifier.env": {"LORE_VERIFIER_KEY": key("verifier"), "ZG_API_KEY": "", "ZG_STORAGE_PRIVATE_KEY": key("verifier_storage")},
-        "curator.env": {"LORE_CURATOR_KEY": key("curator"), "ZG_API_KEY": "", "ZG_STORAGE_PRIVATE_KEY": key("curator_storage")},
+        "verifier.env": {"LORE_VERIFIER_KEY": key("verifier"), "ZG_API_KEY": "", "ZG_STORAGE_PRIVATE_KEY": key("verifier_storage"),
+                         "LORE_SERVICE_TOKEN": service_token},
+        "curator.env": {"LORE_CURATOR_KEY": key("curator"), "ZG_API_KEY": "", "ZG_STORAGE_PRIVATE_KEY": key("curator_storage"),
+                        "LORE_SERVICE_TOKEN": service_token},
         "attestation.env": {"ZG_STORAGE_PRIVATE_KEY": key("attestation")},
     }
     for name, values in files.items():

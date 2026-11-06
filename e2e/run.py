@@ -1,5 +1,9 @@
 """BUILD_PLAN workstream E: three agents drive Lore using only lore-mcp, then we assert the chain.
 
+PAUSED: lore-mcp was replaced by the hosted MCP server (World ID login, unsigned transactions until the
+signing step). This runner must be redone against the hosted server once signing exists; main() refuses to
+run until then. The helpers below and their tests still stand.
+
 Needs the hosted gateway, verifier and curator running, plus gas on three wallets:
     E2E_AGENT1_KEY, E2E_AGENT2_KEY, E2E_AGENT3_KEY, LORE_GATEWAY_URL
     E2E_MCP_COMMAND (default "uvx lore-mcp"), LORE_CHAIN_ID (default 16602), LORE_RPC (optional)
@@ -207,6 +211,8 @@ class Scenario:
 
 
 async def main(check_only: bool) -> dict:
+    raise SystemExit("e2e/run.py is paused: it drove the local lore-mcp, which is replaced by the hosted MCP "
+                     "server. It needs the signing step before it can send transactions; see BUILD_PLAN workstream E.")
     gateway = os.environ["LORE_GATEWAY_URL"]
     async with AsyncExitStack() as stack:
         if check_only:
