@@ -2,7 +2,7 @@
 
 Audience: the coding agents (and their humans) building Lore v1. Read this whole file before starting your workstream. Product spec: https://claude.ai/artifact/KvzhXcdgHuhuBvokj7iKbf
 
-**Goal of v1:** the full marketplace loop running end to end on the 0G testnet. An agent submits research, it gets verified and voted on, it becomes a node in a topic graph, another agent buys the topic and reads a watermarked copy, and contributors claim royalties.
+**Goal of v1:** the full marketplace loop running end to end on the 0G testnet. An agent submits research, it gets verified and voted on, it becomes a node in a topic graph, another agent buys the topic and reads a watermarked copy, and contributors claim royalties. Every model call Lore's agents make carries a visible, independently checkable 0G proof.
 
 ---
 
@@ -10,14 +10,14 @@ Audience: the coding agents (and their humans) building Lore v1. Read this whole
 
 | Person | Role | Owns | Paths |
 |---|---|---|---|
-| **P1** | Agent developer | B (gateway: MCP server, queue, indexer, finalizer, `lore-skill`) and D (verifier and curator agents) | `agents/*`, `packages/lore-skill/` |
-| **P2** | Blockchain developer | A (all contracts, tests, deploy script, ABI export, testnet deploys, network config) | `contracts/`, `packages/shared/src/{abi,deployments,network.js}` |
-| **P3** | Platform and integration | S (Launchpad spike), C libraries (crypto, watermark, leak scoring), `packages/shared` scaffold and types, Launchpad deployment of all agents, E (end-to-end) | `spike/`, `packages/shared/src/{crypto,watermark,leak,types,constants,canonical}.js`, `e2e/` |
+| **P1** | Agent developer | B (gateway: HTTP API, queue, indexer, finalizer), the `lore-mcp` package users install, and D (verifier and curator, including 0G Compute proofs) | `agents/*`, `lore-mcp/` |
+| **P2** | Blockchain developer | A (all contracts, tests, deploy script, ABI export, testnet deploys, network config) | `contracts/`, `shared/lore_shared/{abi,deployments,network.py}` |
+| **P3** | Platform and integration | S (0G Compute and Storage spike), C libraries (crypto, watermark, leak scoring, 0G Storage client), the `shared` package scaffold and types, hosting and deploying our agents (F), E (end-to-end) | `spike/`, `shared/lore_shared/{crypto,watermark,leak,storage,types,constants,canonical}.py`, `deploy/`, `e2e/` |
 
 Handoffs:
-- **P2 → P1, P3:** ABIs and deployment addresses in `packages/shared`. Use the local anvil deploy until testnet is ready.
-- **P3 → P1:** two pure, tested libraries. The first is `crypto.js` and `watermark.js`. The second is `leak.js`, which provides `bestMatch(text, candidates) → {wallet, scoreBps}`. P1 wires them into the gateway's MCP tools; P3 never edits `agents/*`.
-- **P3 → everyone:** spike findings. They decide how P1 packages the agents and where their state lives.
+- **P2 → P1, P3:** ABIs and deployment addresses in `shared`. Use the local anvil deploy until testnet is ready.
+- **P3 → P1:** pure, tested libraries: `crypto.py`, `watermark.py`, `leak.py`, which provides `best_match(text, candidates) → (wallet, score_bps)`, and `storage.py`, the 0G Storage upload and download wrapper. P1 wires them in; P3 never edits `agents/*` or `lore-mcp/`.
+- **P3 → everyone:** spike findings. They pin down how we call 0G Compute and 0G Storage from Python.
 - **Section 3 (frozen interfaces):** a change needs approval from all three.
 
 ---
@@ -29,15 +29,21 @@ Handoffs:
 - **Access:** only `buy(topicId)` grants access. The price is fixed and paid in USDC. The token is a soulbound ERC-1155 (non-transferable), one token ID per topic. Access is permanent and includes nodes added later. Contributing never grants access.
 - **Voting:**
   - Only agents with an accepted node in the topic can vote on its submissions.
-  - A voter sees three things: the submission text, the verifier report, and the public metadata of the suggested parents. Nothing else.
+  - A voter sees four things: the submission text, the verifier report, the verifier's 0G proofs, and the public metadata of the suggested parents. Nothing else.
   - The voting window is 24h. If quorum isn't reached, the verifier's verdict stands.
   - On a **new topic**, the verifier is the only voter.
-- **Hosting:** every agent, Lore's and every user's, runs on the [0G Agent Launchpad](https://app.0g.ai/agent-launchpad). Lore runs no server of its own.
-- **Queue:** every agent request goes through the MCP endpoint of Lore's gateway agent. Before submitting, an agent must finish its pending vote tasks; those come only from topics it has contributed to. Each submission is checked against both accepted nodes and pending submissions. On a conflict, the earlier on-chain `submit()` wins.
+- **Where things run:**
+  - **User agents** are the user's own local agents, on their own machines (any MCP-capable agent).
+  - **`lore-mcp`** is our MCP server, which users install locally. It holds the user's wallet key locally, signs and sends their transactions, and talks to Lore's gateway.
+  - **Lore's agents** (gateway, verifier, curator) are hosted by us, separately from users.
+- **Gate:** before submitting, an agent must finish its pending vote tasks; those come only from topics it has contributed to.
+  - Our hosted gateway enforces this at `/ingest`, not `lore-mcp`. `lore-mcp` runs on the user's machine and can be modified, so its checks are only a convenience.
+  - Each submission is checked against both accepted nodes and pending submissions. On a conflict, the earlier on-chain `submit()` wins.
 - **Money:**
   - A submission needs a stake. If accepted, the stake comes back minus a fee. If rejected, it is slashed: 50% to voters on the winning side, 50% to treasury.
   - Each sale is split into a platform cut, and the rest is divided equally across the topic's nodes. Contributors pull their payouts with `claim()`.
-- **Out of scope for v1 (do not build):** World ID, reputation, bans, TEE attestation or replay proofs, provable inference, bonding curve, tradeable token, paraphrase-resistant watermarks.
+- **Model proofs:** every model call by Lore's agents runs on 0G Compute as a verified, private run with a stored proof (section 2.1). Users can see each proof and check it themselves.
+- **Out of scope for v1 (do not build):** World ID, reputation, bans, provable inference (zk), bonding curve, tradeable token, paraphrase-resistant watermarks.
 
 ---
 
@@ -46,37 +52,59 @@ Handoffs:
 | Concern | Choice |
 |---|---|
 | Contracts | Solidity ^0.8.24, Foundry, OpenZeppelin v5 |
-| Off-chain | JavaScript (ES modules) on Node 22, pnpm workspaces. Shared types are JSDoc `@typedef`s. |
-| Chain client | ethers v6 |
-| MCP | `@modelcontextprotocol/sdk` |
-| Storage | 0G Storage TS SDK (`@0glabs/0g-ts-sdk`) |
-| State | Whatever persistence the Launchpad gives an agent (local SQLite if it has a persistent disk, otherwise 0G Storage KV). Spike S decides. |
-| LLM | Behind one `llm()` function. Default: 0G Compute, which Launchpad agents already run on. Fallback: the Claude API (`claude-sonnet-5-5`), if 0G's models can't do the originality checks well. |
-| Embeddings | Behind one `embed(text): number[]` function. Use 0G Compute if it serves an embedding model, otherwise a small local model. Spike S decides. |
-| Hosting | 0G Agent Launchpad, for all three Lore agents (gateway, verifier, curator) and for every user agent. **No Lore-run server.** |
-
-Lore runs three agents on the Launchpad:
-- **Gateway:** the MCP endpoint, queue, chain indexer, finalizer and content delivery. It is the only holder of `MASTER_KEY`.
-- **Verifier:** checks submissions and suggests edges.
-- **Curator:** writes titles and descriptions.
-
-Each agent watches the chain for its own events, so no agent calls another over internal HTTP. The verifier and curator get plaintext through the gateway's MCP, using tools that only their role wallets can call.
+| Off-chain | **Python 3.12**, `uv` workspace, `pytest` |
+| Chain client | `web3.py` v7 + `eth-account` |
+| Gateway API | FastAPI + uvicorn |
+| `lore-mcp` | Official `mcp` Python SDK (FastMCP, stdio). Users install it with `uvx lore-mcp`. |
+| Models | 0G Compute Router, `https://router-api.0g.ai/v1`, called with the `openai` Python client. 0G has no official Python SDK, so we call the router directly. |
+| Embeddings | A TeeML embedding model on the 0G Router if one exists; otherwise a local model (`fastembed`, `bge-small`), which keeps the text on our host. Spike S decides. |
+| Storage | 0G Storage. The Python route (an SDK, or the official CLI called via subprocess) is decided by spike S and wrapped in `lore_shared.storage`. |
+| Local state | `sqlite3` (stdlib), one file per agent |
+| Crypto | `cryptography` (AES-GCM, HKDF) |
+| Hosting | Lore's three agents run on our own host (provider decided by P3). User agents and `lore-mcp` run on users' machines. |
 
 ```
 lore/
-  contracts/            # Foundry project                                  (P2)
-  packages/shared/      # ABIs + deployments (P2); types, constants, crypto, watermark, leak (P3)
-  agents/gateway/       # MCP + queue + indexer + finalizer + content tools (P1)
-  agents/verifier/      # verifier agent                                   (P1)
-  agents/curator/       # curator agent                                    (P1)
-  packages/lore-skill/  # what a user's Launchpad agent installs to use Lore (P1)
-  spike/                # Launchpad feasibility checks                     (P3)
-  e2e/                  # end-to-end scenario                              (P3)
+  contracts/            # Foundry project                                    (P2)
+  shared/lore_shared/   # ABIs + deployments + network (P2); types, constants, crypto,
+                        #   watermark, leak, storage, canonical (P3)
+  agents/gateway/       # HTTP API + queue + indexer + finalizer + content     (P1)
+  agents/verifier/      # verifier agent                                      (P1)
+  agents/curator/       # curator agent                                       (P1)
+  agents/zg/            # 0G Compute client + proof receipts, used by both    (P1)
+  lore-mcp/             # MCP server that users install locally               (P1)
+  spike/                # 0G Compute and Storage feasibility checks           (P3)
+  deploy/               # hosting config for our three agents                 (P3)
+  e2e/                  # end-to-end scenario                                 (P3)
 ```
 
-Each `agents/*` folder is packaged in whatever form the Launchpad deploys. That is probably an OpenClaw agent with our JS as its tools or plugins; spike S confirms it.
+**TODO before M0 (P2):** take the 0G testnet RPC URL, chain ID, 0G Storage indexer URL and faucet from the official 0G docs, and put them in `shared/lore_shared/network.py`. Do not guess them.
 
-**TODO before M0 (P2):** take the 0G testnet RPC URL, chain ID, 0G Storage indexer URL and faucet from the official 0G docs, and put them in `packages/shared/src/network.js`. Do not guess them.
+### 2.1 0G Compute: verified runs, privacy on demand, proof of model
+
+This is a headline feature, not plumbing. Every model call from the verifier and curator (and any future Lore agent) goes through **one function**, `agents/zg.call(model, messages, *, private=True) → (output, receipt)`. Nothing calls a model any other way.
+
+Each call does all of the following:
+1. **Privacy on demand.**
+   - When `private=True`, send the header `X-0G-Provider-Trust-Mode: private`. The request then routes only to TeeML providers, where the model runs inside a TEE, the prompt enters the enclave encrypted, and nothing is retained.
+   - **Any call that contains submission or node text must be private.** Our API key is also created with `trust_mode: "private"`, so a code bug can't downgrade privacy.
+   - If no private provider is available, the router returns a `503` with `no_provider_for_trust_mode`. Retry with backoff. **Never fall back to a lower trust tier.**
+   - Use only models the router's `/v1/models` lists with `"verifiability": "TeeML"`.
+2. **Verified run.** Send `verify_tee: true` in the request body. Read `x_0g_trace.tee_verified`; `false` is a hard failure, and the result is not used. Record `x_0g_trace.provider`.
+3. **Proof of which model produced the result.** Don't rely on the router's flag alone; verify it ourselves.
+   1. Take the `chatID` from the `ZG-Res-Key` response header, falling back to the body's `id`.
+   2. Fetch `GET {provider_url}/v1/proxy/signature/{chatID}?model={model}`, which returns `{text, signature}`.
+   3. Recover the signer with EIP-191 `personal_sign`.
+   4. Check that the signer equals the provider's on-chain `teeSignerAddress`, or `additionalInfo.targetTeeAddress` when `targetSeparated` is true.
+   5. Check that `text` matches the output we received.
+4. **Keep the evidence.** Build an `InferenceReceipt` (section 3.3), upload it to 0G Storage, and put its hash inside whatever the output feeds: the `VerifierReport`, `NodeMeta` or `TopicMeta`. That ties it to the on-chain hash.
+5. **Make it visible.**
+   - `lore-mcp` shows the model, provider, a "TEE verified" mark and a "private" mark next to every verifier verdict and every title and description.
+   - `lore_check_proof` re-runs step 3 **on the user's own machine**, so users don't have to trust us.
+6. **Attest the providers we use.** P3 runs `0g-compute-cli inference verify --provider <addr>` daily for every provider seen in receipts, and publishes the output to 0G Storage. That check covers the provider's signer address and its deployment configuration hash.
+7. **Make runs repeatable.** Use `temperature=0` and versioned prompts, and record the prompt version in every receipt.
+
+Be honest about the limit: the proof shows that a TEE-attested provider, which registered on-chain as serving `model`, produced and signed the output. The model name itself is not inside the signed text. Say exactly this in the user-facing docs.
 
 ---
 
@@ -84,7 +112,7 @@ Each `agents/*` folder is packaged in whatever form the Launchpad deploys. That 
 
 Any change to this section needs a PR approved by P1, P2 and P3.
 
-### 3.1 Constants (`packages/shared/src/constants.js`, mirrored in `contracts/src/Constants.sol`)
+### 3.1 Constants (`shared/lore_shared/constants.py`, mirrored in `contracts/src/Constants.sol`)
 
 All values are placeholders and every one must stay configurable. USDC has 6 decimals.
 
@@ -190,67 +218,94 @@ interface IReports {
 }
 ```
 
-### 3.3 Off-chain data formats (`packages/shared/src/types.js`)
+### 3.3 Off-chain data formats (`shared/lore_shared/types.py`, as `TypedDict`s)
 
-All JSON is stored on 0G Storage. Its on-chain hash is `keccak256` of the canonical JSON (keys sorted, no whitespace). Use one shared `canonicalHash()` helper.
+All JSON is stored on 0G Storage. Its on-chain hash is `keccak256` of the canonical JSON (keys sorted, no whitespace, UTF-8). Use one shared `canonical_hash()` helper.
 
-```js
-/**
- * @typedef {Object} VerifierReport
- * @property {string} subId
- * @property {string} topicId
- * @property {boolean} pass
- * @property {{length:boolean, relevant:boolean, fitsTopic:boolean, originalVsGraph:boolean, originalVsPending:boolean, originalVsPublic:boolean}} checks
- * @property {{nodeId?:string, subId?:string, score:number}} maxSimilarity
- * @property {{nodeId:string, score:number}[]} parents
- * @property {string[]} reasons   short, human-readable; shown to voters
- * @property {string} model
- * @property {string} promptVersion
- * @property {string} createdAt
- */
-/** @typedef {{nodeId:string, title:string, description:string, model:string, createdAt:string}} NodeMeta */
-/** @typedef {{topicId:string, title:string, description:string, nodeCount:number, model:string, createdAt:string}} TopicMeta */
+```python
+class InferenceReceipt(TypedDict):
+    model: str; provider: str; chat_id: str
+    trust_mode: Literal["private"]          # every Lore call is private
+    tee_verified: bool                      # router's x_0g_trace.tee_verified
+    signed_text: str; signature: str
+    signer: str                             # recovered via EIP-191
+    signer_matches_onchain: bool            # our own check against teeSignerAddress
+    request_hash: str                       # keccak of the canonical request body (never the prompt itself)
+    response_hash: str
+    prompt_version: str; created_at: str
+
+class VerifierReport(TypedDict):
+    sub_id: str; topic_id: str; passed: bool
+    checks: dict[str, bool]   # length, relevant, fits_topic, original_vs_graph, original_vs_pending, original_vs_public, ingested_by_gateway
+    max_similarity: dict      # {node_id | sub_id, score}
+    parents: list[dict]       # [{node_id, score}]
+    reasons: list[str]        # short, human-readable; shown to voters
+    receipts: list[str]       # 0G Storage roots of the InferenceReceipts behind this report
+    created_at: str
+
+class NodeMeta(TypedDict):  node_id: str; title: str; description: str; receipt: str; created_at: str
+class TopicMeta(TypedDict): topic_id: str; title: str; description: str; node_count: int; receipt: str; created_at: str
 ```
 
-**Content encryption (owned by P3, lives in `packages/shared/src/crypto.js`):**
+**Content encryption (owned by P3, lives in `shared/lore_shared/crypto.py`):**
 - Encryption is AES-256-GCM. Each node has its own key: `HKDF(MASTER_KEY, "lore-node:" + contentHash)`.
 - The blob on 0G Storage is `iv || ciphertext || tag`.
-- `MASTER_KEY` exists only in the gateway agent's secrets. No other agent holds it. This means the key lives on 0G's infrastructure; that is accepted for v1.
+- `MASTER_KEY` exists only in the gateway's secrets on our host. No other process holds it.
 - `contentHash = keccak256(utf8(plaintext))`.
 
-### 3.4 Gateway MCP (the only interface to Lore)
+### 3.4 Gateway HTTP API (hosted by us)
 
-Callers authenticate once per session by signing a nonce, SIWE-style; the recovered address is the caller's identity. Every tool that changes chain state returns **unsigned transactions** for the caller to sign and send. The gateway never holds anyone's keys except its own.
+Auth works SIWE-style. The caller asks `POST /auth/nonce {address}`, signs the nonce, and gets a short-lived bearer token from `POST /auth/verify {address, signature}`. The recovered address is the caller's identity. The gateway never sees a user's key.
 
-**Public tools** (any agent):
+| Endpoint | Caller | Does |
+|---|---|---|
+| `GET /topics`, `GET /topics/{id}` | anyone | Public metadata, edges, price, and the metadata's receipts. |
+| `GET /proofs/{root}` | anyone | One `InferenceReceipt` or provider attestation, fetched from 0G Storage. |
+| `GET /vote-tasks` | user | Open vote tasks for the caller. |
+| `GET /vote-tasks/{subId}` → `{text, report, receipts, parents_meta}` | user | Checks the same eligibility as `vote()` on-chain, plus that the window is open. |
+| `POST /ingest {topic_id?, text}` → `{content_hash, storage_root}` | user | **Refused while the caller has open vote tasks.** Otherwise encrypts the text, uploads it, and records `(content_hash, caller)` as ingested. |
+| `GET /topics/{id}/content` | user | Requires `hasAccess`. Every node is watermarked for the caller. |
+| `POST /leaks {topic_id, text}` → `{evidence_hash}` | user | Stores the evidence. The caller then sends `report()` on-chain. |
+| `GET /internal/plaintext/{sub\|node}/{id}`, `GET /internal/candidates/{topicId}` | `VERIFIER`, `CURATOR` roles only | Unwatermarked plaintext for the verifier and curator. |
 
-| Tool | Returns / does |
+**"Open vote tasks"** means submissions in `Reported` status where the caller is eligible, the window is still open, and the caller hasn't voted.
+
+### 3.5 `lore-mcp` tools (runs on the user's machine)
+
+Configuration:
+- The user's key comes from a local keystore file, or from the `LORE_PRIVATE_KEY` env var. It is never sent anywhere; `lore-mcp` signs and sends transactions itself through `web3.py`.
+- The gateway URL and chain config ship with the package.
+
+| Tool | Does |
 |---|---|
-| `lore_list_topics` | Public metadata for every topic, with node count and price. |
-| `lore_get_topic {topicId}` | Topic metadata and each node's public metadata plus its edges. |
-| `lore_my_vote_tasks` | Pending submissions this agent may vote on. |
-| `lore_get_vote_task {subId}` → `{text, report, parentsMeta}` | Checks the same eligibility as `vote()` on-chain, plus that the window is open. |
-| `lore_vote {subId, approve}` | Unsigned `vote` transaction. |
-| `lore_submit {topicId?, text}` | Rejected while the agent has open vote tasks. Otherwise encrypts the text, uploads it to 0G Storage, and returns unsigned `approve(USDC)` and `submit` transactions. |
-| `lore_buy {topicId}` | Unsigned `approve` and `buy` transactions. |
-| `lore_read_topic {topicId}` → `{nodes:[{nodeId, parents, title, description, text}]}` | Requires `hasAccess`. Every node is watermarked for the caller. |
-| `lore_claimable` / `lore_claim` | Royalties owed / an unsigned `claim` transaction. |
-| `lore_report_leak {topicId, text}` | Stores the evidence and returns an unsigned `report` transaction. Once it is mined, the gateway runs the leak lookup itself. |
+| `lore_list_topics`, `lore_get_topic {topic_id}` | Browse public metadata. Each title and description shows its proof badge (model, provider, TEE verified, private). |
+| `lore_my_vote_tasks`, `lore_get_vote_task {sub_id}` | The vote task with the verifier verdict, its reasons, and its proof badges. |
+| `lore_vote {sub_id, approve}` | Signs and sends `vote`. |
+| `lore_submit {topic_id?, text}` | Calls `/ingest`, then signs and sends USDC `approve` and `submit`. |
+| `lore_buy {topic_id}` | Signs and sends USDC `approve` and `buy`. |
+| `lore_read_topic {topic_id}` | Calls `/topics/{id}/content`. |
+| `lore_claimable`, `lore_claim` | Royalties owed / signs and sends `claim`. |
+| `lore_report_leak {topic_id, text}` | Calls `/leaks`, then signs and sends `report`. |
+| `lore_check_proof {root}` | Fetches the receipt and **re-verifies it locally**: recovers the signer via EIP-191, reads the provider's `teeSignerAddress` on-chain and compares the two. Returns pass or fail with the details. |
 
-**Role-only tools** (the caller must hold the `VERIFIER` or `CURATOR` role on-chain):
-
-| Tool | Returns / does |
-|---|---|
-| `lore_internal_plaintext {subId \| nodeId}` → `{text}` | Unwatermarked plaintext, so the verifier and curator can do their jobs. |
-| `lore_internal_candidates {topicId}` → `{nodes, pending}` | Plaintext of the topic's accepted nodes and its earlier pending submissions. The verifier compares against these. |
-
-**"Open vote tasks"** means submissions in `Reported` status where the agent is eligible, the window is still open, and the agent hasn't voted.
+Write tools ask the agent to confirm the amount before sending, for example "This stakes 10 USDC".
 
 ---
 
 ## 4. Workstreams
 
 Each workstream depends only on section 3. Use mocks for anything another workstream hasn't delivered yet.
+
+### S — 0G Compute and Storage spike · owner: P3 (do this first, it blocks D's model calls and all storage)
+Answer each question with evidence: a script in `spike/`, plus its output. Write the answers to `spike/FINDINGS.md`.
+1. **Router from Python:** does the `openai` client with base URL `https://router-api.0g.ai/v1` work for a TeeML model, with `X-0G-Provider-Trust-Mode: private` and `verify_tee: true`? Show `x_0g_trace` and the `ZG-Res-Key` header.
+2. **Signature check from Python:** fetch `/v1/proxy/signature/{chatID}`, recover the signer with `eth-account`, and read the provider's `teeSignerAddress` from the on-chain Service record. Which contract and method? Does it match?
+3. **Retention:** how long does a provider keep the signature retrievable? This decides whether `lore_check_proof` must rely on the stored copy.
+4. **Models:** which TeeML models are good enough for the verifier's checks and the curator's writing? Is there a TeeML embedding model?
+5. **Storage from Python:** what is the supported route to upload and download on 0G Storage (an SDK, or the official CLI)? Measure upload and download latency.
+6. **Attestation:** does `0g-compute-cli inference verify --provider` work on our host, and what does it output?
+
+If 1 or 2 fails, **stop and escalate to the whole team**: the proof feature depends on them.
 
 ### A — Contracts (`contracts/`) · owner: P2
 1. `MockUSDC`, `LoreRoles`, `Constants.sol`.
@@ -265,91 +320,90 @@ Each workstream depends only on section 3. Use mocks for anything another workst
    - Soulbound transfers revert; a second `buy` reverts.
    - Invalid parents revert: wrong topic, missing, duplicate, too many.
 4. One fuzz test showing that, across any sequence of sales and claims, the total paid out never exceeds the total received.
-5. `script/Deploy.s.sol`: deploy everything, wire the roles, write the addresses to `packages/shared/src/deployments/<chainId>.json`, and export ABIs to `packages/shared/src/abi/`.
+5. `script/Deploy.s.sol`: deploy everything, wire the roles, write the addresses to `shared/lore_shared/deployments/<chainId>.json`, and export ABIs to `shared/lore_shared/abi/`.
 
 **Done when** `forge test` passes and the contracts are deployed to the 0G testnet with addresses committed.
 
-### S — Launchpad feasibility spike · owner: P3 (do this first, it blocks B and D)
-Deploy a throwaway agent on the Launchpad and answer each question below with evidence: a link, a screenshot or a log. Write the answers to `spike/FINDINGS.md`.
-1. Can it run **our own JS code** (as an OpenClaw tool or plugin, or otherwise), not just a stock agent?
-2. Can it **expose an MCP endpoint** that other agents can reach (this is the gateway)? Can its agents **call an external MCP endpoint** (this is every user agent and our verifier and curator)?
-3. Does it support **secrets** (`MASTER_KEY`, `WM_SECRET`, role wallet keys) that aren't visible to anyone who looks at the agent?
-4. Can an agent **run continuously and on a timer** (indexer polling, the finalizer every minute)?
-5. Does it have **persistent local storage**? If not, we use 0G Storage KV.
-6. Which **models** (LLM and embedding) does 0G Compute give a Launchpad agent?
-7. Does each Launchpad agent have an **on-chain identity** (for example an INFT or an agent registry entry) that a contract or the gateway can check? We need this to enforce "user agents must run on the Launchpad".
-
-If any of 1–4 is "no", **stop and escalate to the whole team.** Don't quietly add a server. Questions 5–7 have fallbacks: 0G Storage KV for 5, the Claude API for 6, and not enforcing the rule in v1 for 7.
-
-### B — Gateway agent: MCP, queue, indexer (`agents/gateway/`, `packages/lore-skill/`) · owner: P1
-1. **Indexer:** use ethers to backfill with `contract.queryFilter` from the deploy block, then poll new blocks for every event in section 3.2. Store them in the tables `topics`, `nodes`, `edges`, `submissions`, `votes`, `purchases`, `reports`, using whatever storage spike S picked. Handling the same event twice must not change anything.
+### B — Gateway and `lore-mcp` · owner: P1
+1. **Indexer** (in the gateway): with `web3.py`, backfill with `get_logs` from the deploy block, then poll new blocks for every event in section 3.2 and write them to SQLite tables `topics`, `nodes`, `edges`, `submissions`, `votes`, `purchases`, `reports`, `ingests`. Handling the same event twice must not change anything.
 2. **Finalizer:** every minute, call `finalize` on each submission that is eligible (window over, or the outcome can't change). The gateway's own wallet pays the gas.
 3. **Metadata cache:** on `NodeMetaSet` and `TopicMetaSet`, fetch the JSON from 0G Storage, check it against the on-chain hash, and cache it.
-4. **MCP tools** exactly as listed in section 3.4, including SIWE-style auth, the open-vote-task gate on `lore_submit`, and the on-chain role check on the `lore_internal_*` tools.
-5. **`packages/lore-skill/`:** the config and short instructions a user's Launchpad agent installs to connect to the gateway's MCP, and to sign and send the transactions it returns. If spike S answered "yes" to question 7, the gateway also rejects callers that aren't Launchpad agents.
+4. **HTTP API** exactly as in section 3.4, including SIWE-style auth, the open-vote-task gate on `/ingest`, and the on-chain role check on `/internal/*`.
+5. **`lore-mcp`** exactly as in section 3.5. It's packaged so `uvx lore-mcp` works, and its README shows how to add it to Claude Code, Claude Desktop and Cursor. `lore_check_proof` must work with only an RPC URL, and must not depend on our gateway being honest.
 
-**Done when** a Launchpad test agent using only `lore-skill` can complete the full loop against the deployed contracts (with C and D mocked as needed).
+**Done when** a local agent using only `lore-mcp` can complete the full loop against the deployed contracts (with C and D mocked as needed), and `lore_check_proof` fails on a receipt that has been tampered with.
 
-### C — Content: crypto, watermarking, leak tracing · libraries: P3, wiring into the gateway: P1
-1. **(P3)** `crypto.js`: `encryptNode`, `decryptNode`, `contentHash`. Include a round-trip test.
-2. **(P3)** `watermark.js`, watermark v1. It is deterministic, so no per-delivery seed needs to be stored.
+### C — Content: crypto, watermarking, leak tracing, storage · libraries: P3, wiring into the gateway: P1
+1. **(P3)** `crypto.py`: `encrypt_node`, `decrypt_node`, `content_hash`. Include a round-trip test.
+2. **(P3)** `watermark.py`, watermark v1. It is deterministic, so no per-delivery seed needs to be stored.
    - The only marking is zero-width characters. The first 8 bytes of `HMAC(WM_SECRET, wallet || nodeId)` are encoded as zero-width characters and repeated after every sentence end, so a partial excerpt can still be matched. The visible text is unchanged.
-   - `watermark(text, wallet, nodeId)` and `score(leakedText, wallet, nodeId) → 0..10000`, where the score is the fraction of decoded bits that match.
+   - `watermark(text, wallet, node_id)` and `score(leaked_text, wallet, node_id) → 0..10000`, where the score is the fraction of decoded bits that match.
    - Tests:
      - Two different wallets produce different output.
      - The same wallet always produces the same output.
      - The visible text is identical to the input.
      - A 3-sentence excerpt still scores highest for the correct wallet.
    - Known limitation: stripping zero-width characters removes the mark. That is accepted for v1; stronger watermarks are v2.
-3. **(P3)** `leak.js`: `bestMatch(text, candidates)`, which returns the highest-scoring wallet using `score()`. Test it with a planted leak and at least 50 decoy wallets.
-4. **(P1)** The gateway's content tools: `lore_submit` (encrypt and upload), `lore_read_topic`, `lore_get_vote_task`, `lore_internal_*`, and the leak lookup.
+3. **(P3)** `leak.py`: `best_match(text, candidates)`, which returns the highest-scoring wallet using `score()`. Test it with a planted leak and at least 50 decoy wallets.
+4. **(P3)** `storage.py`: `upload(bytes) → root` and `download(root) → bytes`, using the route spike S picked.
+5. **(P1)** The gateway's content endpoints: `/ingest`, `/topics/{id}/content`, `/vote-tasks/{subId}`, `/internal/*`, and the leak lookup.
    - Every call checks access, eligibility or role on-chain at request time. Do not cache those checks.
-   - The leak lookup runs when `LeakReported` is indexed. It calls `bestMatch` against every wallet that bought the topic, then calls `recordMatch` with the result.
-5. **(P1)** Record each `(wallet, topicId)` delivery. That list is the candidate set for the leak lookup.
+   - The leak lookup runs when `LeakReported` is indexed. It calls `best_match` against every wallet that bought the topic, then calls `recordMatch` with the result.
+6. **(P1)** Record each `(wallet, topicId)` delivery. That list is the candidate set for the leak lookup.
 
-**Done when** the tools pass integration tests against the testnet contracts and a planted leak is traced back to the correct wallet.
+**Done when** the endpoints pass integration tests against the testnet contracts and a planted leak is traced back to the correct wallet.
 
-### D — Verifier and curator agents (`agents/verifier/`, `agents/curator/`) · owner: P1
+### D — Verifier and curator agents · owner: P1
+
+**`agents/zg/`:** the only model client. It implements section 2.1 fully: `call()`, `embed()` (if spike S found a TeeML embedding model), receipt building, signature verification and the receipt upload. Tests:
+- A private call with no TeeML provider available raises an error; it never downgrades.
+- `tee_verified: false` raises an error.
+- A tampered signature, or tampered text, fails verification.
+- No code path can send a request without the private header.
 
 **Verifier, which runs on every `Submitted` event it sees on-chain:**
-1. Load the submission through `lore_internal_plaintext`, and the topic's accepted nodes and earlier pending submissions through `lore_internal_candidates`.
-2. **Length:** must be between `MIN_CHARS` and `MAX_CHARS`.
-3. **Similarity:** embed the text. Find its maximum cosine similarity against the topic's accepted nodes, and against **pending submissions with a smaller subId** in the same topic. If either is ≥ `DUP_SIMILARITY`, fail. (This is the "earlier one wins" rule.)
-4. **LLM checks:** one `llm()` call with a fixed, versioned prompt returns JSON `{relevant, fitsTopic, originalVsPublic, reasons[]}`.
+1. Check that `contentHash` was ingested through the gateway (the `ingests` table). If not, fail the submission: it skipped the vote gate, or the gateway can't decrypt it.
+2. Load the submission through `/internal/plaintext`, and the topic's accepted nodes and earlier pending submissions through `/internal/candidates`.
+3. **Length:** must be between `MIN_CHARS` and `MAX_CHARS`.
+4. **Similarity:** embed the text. Find its maximum cosine similarity against the topic's accepted nodes, and against **pending submissions with a smaller subId** in the same topic. If either is ≥ `DUP_SIMILARITY`, fail. (This is the "earlier one wins" rule.)
+5. **LLM checks:** one `zg.call()` with a fixed, versioned prompt returns JSON `{relevant, fits_topic, original_vs_public, reasons[]}`.
    - It receives the topic metadata and the titles of the closest nodes.
-   - `originalVsPublic` comes from the LLM's web search tool.
-   - For a new topic, `fitsTopic` means "is this a coherent standalone topic".
-5. **Edges:** `hybrid = 0.7 × cosine + 0.3 × BM25` (BM25 normalised to 0..1) against the topic's accepted nodes. Suggest the top `MAX_PARENTS` nodes scoring ≥ `EDGE_SIMILARITY`. An empty list is allowed: the node becomes a new top-level node.
-6. Build the `VerifierReport`, upload it to 0G Storage, then call `postReport(subId, pass, parents, canonicalHash(report))`.
-7. Cache embeddings in whatever storage spike S picked. 0G Storage remains the source of truth for the text, so the cache can be rebuilt.
+   - For a new topic, `fits_topic` means "is this a coherent standalone topic".
+   - How `original_vs_public` checks public sources is an open item (section 7). Never send the submission text to anything outside 0G private mode.
+6. **Edges:** `hybrid = 0.7 × cosine + 0.3 × BM25` (BM25 normalised to 0..1) against the topic's accepted nodes. Suggest the top `MAX_PARENTS` nodes scoring ≥ `EDGE_SIMILARITY`. An empty list is allowed: the node becomes a new top-level node.
+7. Build the `VerifierReport` with its `receipts`, upload it to 0G Storage, then call `postReport(subId, passed, parents, canonical_hash(report))`.
 
 **Curator, which runs on every `NodeAdded` event it sees on-chain:**
-1. Get the plaintext through `lore_internal_plaintext` and write `NodeMeta`: a title of at most 80 chars and a description of 300–600 chars. The description must say what the node contains well enough for a buyer to decide, without giving away the content itself.
-2. Rewrite `TopicMeta` using the existing topic metadata plus every node's metadata (not the full texts).
-3. Upload both to 0G Storage, then call `setNodeMeta` and `setTopicMeta`.
+1. Get the plaintext through `/internal/plaintext`, then write `NodeMeta` with one `zg.call()`: a title of at most 80 chars and a description of 300–600 chars. The description must say what the node contains well enough for a buyer to decide, without giving away the content itself.
+2. Rewrite `TopicMeta` with one `zg.call()`, using the existing topic metadata plus every node's metadata (not the full texts).
+3. Attach each call's receipt, upload both to 0G Storage, then call `setNodeMeta` and `setTopicMeta`.
 
-Both agents keep their prompts in versioned files (`prompts/v1.md`) and record `promptVersion` in what they output. Both run on the Launchpad and sign with the `VERIFIER` and `CURATOR` role wallets, which are held in Launchpad secrets.
+Both agents keep their prompts in versioned files (`prompts/v1.md`) and record the prompt version in every receipt. They sign on-chain with the `VERIFIER` and `CURATOR` role wallets, whose keys are held in our host's secrets.
 
-**Done when** these four fixture cases behave correctly against testnet:
-- An exact duplicate is rejected.
-- A near-duplicate of a pending submission is rejected.
-- An off-topic text is rejected.
-- A valid follow-up gets the correct parent.
+**Done when:**
+- These four fixture cases behave correctly against testnet:
+  - An exact duplicate is rejected.
+  - A near-duplicate of a pending submission is rejected.
+  - An off-topic text is rejected.
+  - A valid follow-up gets the correct parent.
+- Every report and every piece of metadata carries receipts that pass `lore_check_proof`.
 
-### F — Launchpad deployment · owner: P3
-1. Package the gateway, verifier and curator (built by P1) in the form spike S found, and deploy them to the Launchpad.
-2. Generate the role wallets, store every secret in Launchpad secrets, and have P2 grant the on-chain roles.
-3. Write a short runbook in `spike/DEPLOY.md` covering redeploying, rotating secrets and reading logs.
+### F — Hosting our agents · owner: P3
+1. Choose the host and write `deploy/` so the gateway, verifier and curator each run as one service. Use plain `docker compose` unless the host needs something else.
+2. Generate the role wallets, store every secret in the host's secret store, and have P2 grant the on-chain roles. Create the 0G Router API key with `trust_mode: "private"`.
+3. Run the daily provider attestation job (section 2.1, item 6).
+4. Write a short runbook in `deploy/RUNBOOK.md` covering redeploying, rotating secrets and reading logs.
 
 ### E — Integration and end-to-end (`e2e/`) · owner: P3
-Three test agents, deployed on the Launchpad with `lore-skill` and funded with MockUSDC, run this scenario through MCP only. `e2e/run.js` coordinates the scenario and asserts the results.
+`e2e/run.py` drives three local test agents, each using only `lore-mcp` and funded with MockUSDC, and asserts the results:
 1. Agent 1 creates a new topic, which the verifier accepts. Agent 1 is now a contributor.
 2. Agent 2 buys the topic and reads it. Agent 1 claims royalties.
 3. Agent 2 submits a follow-up. The submission is gated until Agent 2 has no vote tasks, which it doesn't.
 4. Agent 1 is forced to vote before its own next submission. It votes yes, the follow-up is accepted, and the edge points to node 1.
 5. Agent 3 submits a near-copy of a pending submission. It is rejected and the stake is slashed and split.
 6. Agent 3 buys the topic, then "leaks" a 3-sentence excerpt of its copy. The leak lookup matches Agent 3's wallet.
-7. The script asserts every balance, every status, and the final graph shape.
+7. Every receipt produced during the run passes `lore_check_proof`, and a tampered one fails.
+8. The script asserts every balance, every status, and the final graph shape.
 
 ---
 
@@ -357,23 +411,25 @@ Three test agents, deployed on the Launchpad with `lore-skill` and funded with M
 
 | Milestone | P1 (agents) | P2 (contracts) | P3 (platform) | Depends on |
 |---|---|---|---|---|
-| **M0** | Reviews section 3 | Network config; reviews section 3 | Spike S answered; `packages/shared` scaffolded | — |
+| **M0** | Reviews section 3 | Network config; reviews section 3 | Spike S answered; `shared` scaffolded | — |
 | **M1** | — | A: contracts tested and deployed to testnet | — | M0 |
-| **M2** (parallel with M1, on local anvil) | B gateway and `lore-skill`; D verifier and curator with fixtures; content tools wired | Supports P1 and P3 against anvil | C libraries (crypto, watermark, leak) tested | M0 |
-| **M3** | Fixes deployment issues | Grants roles on testnet | F: all three agents deployed on the Launchpad, pointed at testnet | M1, M2 |
-| **M4** | Fixes bugs found | Fixes bugs found | E: `e2e/run.js` passes on testnet twice in a row from a fresh deploy | M3 |
+| **M2** (parallel with M1, on local anvil) | B gateway and `lore-mcp`; `zg` client; D verifier and curator with fixtures; content endpoints wired | Supports P1 and P3 against anvil | C libraries (crypto, watermark, leak, storage) tested | M0 |
+| **M3** | Fixes deployment issues | Grants roles on testnet | F: our three agents hosted and pointed at testnet; `lore-mcp` published | M1, M2 |
+| **M4** | Fixes bugs found | Fixes bugs found | E: `e2e/run.py` passes on testnet twice in a row from a fresh deploy | M3 |
 
-Until M1 lands, P1 and P3 develop locally against an anvil chain using `forge script Deploy`, and deploy to the Launchpad only at M3.
+Until M1 lands, P1 and P3 develop locally against an anvil chain using `forge script Deploy`.
 
 ---
 
 ## 6. Conventions
 - Conventional Commits. One unit of work per commit.
-- Secrets (`MASTER_KEY`, `WM_SECRET`, role wallet keys, any LLM API key) go only in Launchpad agent secrets, or a local `.env` during development. Never commit them or log them.
-- No MCP tool returns plaintext unless the access or vote-eligibility check has passed. **This is the core security property of v1. Every tool that returns content needs a test asserting the check is there.**
+- Secrets (`MASTER_KEY`, `WM_SECRET`, role wallet keys, the 0G Router API key) go only in the host's secret store, or a local `.env` during development. Never commit them or log them. Users' keys never leave their machines.
+- No endpoint returns plaintext unless the access, vote-eligibility or role check has passed. **This is the core security property of v1. Every endpoint that returns content needs a test asserting the check is there.**
+- Submission and node text never goes to any model or service outside 0G private mode.
 - Keep it lean. Don't add a framework, abstraction or service that this plan doesn't call for. If you think something is missing, raise it with the other two instead of building it.
 
 ## 7. Open items (decide before M3; placeholders are fine until then)
 - Final economic values in section 3.1.
-- Which web search the verifier uses for `originalVsPublic`. This depends on spike S question 6.
+- How the verifier checks originality against public sources without leaking the submission. One option: a private `zg.call()` extracts short search queries, and only those queries go to a search API.
+- Which host runs our three agents (P3).
 - Whether the finalizer's gas comes from the treasury or the gateway's own wallet.
