@@ -193,3 +193,12 @@ def test_any_account_mode_names_no_credential_class_and_records_what_came_back(e
     fake.next = {"acr": "https://world.org/oidc/acr/device"}
     claims = any_idp.finish(attempt, fake.approve(url), fresh=True)
     assert claims["acr"].endswith("/device")
+
+
+def test_credential_class_setting():
+    from gateway.worldidp import ACCEPTED_ACR, parse_acr
+
+    assert parse_acr(None) == ACCEPTED_ACR and parse_acr("any") is None
+    assert parse_acr("selfie, selfie-face") == ("https://world.org/oidc/acr/selfie", "https://world.org/oidc/acr/selfie-face")
+    with pytest.raises(ValueError):
+        parse_acr("passport")

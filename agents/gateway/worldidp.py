@@ -25,7 +25,22 @@ from eth_utils import keccak
 
 ATTEMPT_TTL = 600  # seconds a login/approval attempt stays open
 CLOCK_SKEW = 60
-ACCEPTED_ACR = ("https://world.org/oidc/acr/orb", "https://world.org/oidc/acr/orb-face")  # advertised by discovery
+ACR_PREFIX = "https://world.org/oidc/acr/"
+ACCEPTED_ACR = (ACR_PREFIX + "orb", ACR_PREFIX + "orb-face")  # the default; production discovery advertises these
+ACR_CLASSES = ("orb", "orb-face", "selfie", "selfie-face")   # all classes World IdP's docs define
+
+
+def parse_acr(setting: str | None) -> tuple[str, ...] | None:
+    """WORLD_IDP_ACR: "any" (no requirement), or comma-separated class names, e.g. "selfie,selfie-face"."""
+    if not setting:
+        return ACCEPTED_ACR
+    if setting.strip() == "any":
+        return None
+    names = [n.strip() for n in setting.split(",") if n.strip()]
+    unknown = [n for n in names if n not in ACR_CLASSES]
+    if unknown or not names:
+        raise ValueError(f"unknown World IdP credential class: {unknown or setting!r} (use {', '.join(ACR_CLASSES)} or any)")
+    return tuple(ACR_PREFIX + n for n in names)
 
 
 class WorldIdPError(Exception):
