@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 import subprocess
 from types import SimpleNamespace
@@ -21,7 +22,7 @@ def test_encrypted_upload_and_proof_download_use_p2_config(monkeypatch):
         paths.append(path)
         if argv[1] == "upload":
             assert path.read_bytes() == b"encrypted-blob"
-            assert path.stat().st_mode & 0o777 == 0o600
+            assert os.name == "nt" or path.stat().st_mode & 0o777 == 0o600  # POSIX modes only
             assert "--key" not in argv and KEY not in " ".join(argv)
             assert options["input"] == KEY
             assert "--fast-mode=false" in argv

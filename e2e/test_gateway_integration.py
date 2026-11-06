@@ -17,6 +17,7 @@ if not (AGENTS / "gateway" / "app.py").is_file():
     pytest.skip("agents/ has not landed in this checkout", allow_module_level=True)
 if "validate_plaintext" not in (AGENTS / "gateway" / "service.py").read_text():
     pytest.skip("P1 has not wired validate_plaintext yet; see e2e/DELIVERY_HANDOFF.md", allow_module_level=True)
+pytest.importorskip("fastapi", reason="run with the agents environment; see the command above")
 sys.path.insert(0, str(AGENTS))
 
 from eth_account import Account  # noqa: E402

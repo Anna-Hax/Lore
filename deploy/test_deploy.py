@@ -1,3 +1,4 @@
+import os
 import importlib.util
 import json
 from pathlib import Path
@@ -24,9 +25,9 @@ RECEIPT = {"provider": "0x" + "AB" * 20, "trust_mode": "private", "tee_verified"
 def test_generated_secrets_are_private_separate_and_accepted_by_launch(tmp_path):
     directory = tmp_path / "secrets"
     create_secrets.create(directory)
-    assert directory.stat().st_mode & 0o777 == 0o700
+    assert os.name == "nt" or directory.stat().st_mode & 0o777 == 0o700  # POSIX modes only
     for name in ("gateway", "verifier", "curator", "attestation"):
-        assert (directory / f"{name}.env").stat().st_mode & 0o777 == 0o600
+        assert os.name == "nt" or (directory / f"{name}.env").stat().st_mode & 0o777 == 0o600
     with pytest.raises(FileExistsError):
         create_secrets.create(directory)
     verifier = (directory / "verifier.env").read_text()

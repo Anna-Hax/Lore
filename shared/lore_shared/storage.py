@@ -38,7 +38,10 @@ class StorageClient:
 
     def _run(self, args: list[str], *, stdin: str = "") -> str:
         # Do not inherit gateway/role/Compute secrets into the storage process.
-        environment = {name: os.environ[name] for name in ("PATH", "TMPDIR", "SSL_CERT_FILE", "SSL_CERT_DIR") if name in os.environ}
+        names = ["PATH", "TMPDIR", "SSL_CERT_FILE", "SSL_CERT_DIR"]
+        if os.name == "nt":  # go-ethereum panics without a home/profile dir on Windows; these hold no secrets
+            names += ["SYSTEMROOT", "USERPROFILE", "LOCALAPPDATA", "APPDATA", "TEMP", "TMP"]
+        environment = {name: os.environ[name] for name in names if name in os.environ}
         try:
             result = subprocess.run(
                 [self.cli, *args], input=stdin, text=True, capture_output=True,
