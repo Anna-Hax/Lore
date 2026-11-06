@@ -15,7 +15,8 @@ def check(reader, addresses: dict) -> dict:
         name: all(reader.call("LoreRoles", "hasRole", reader.call("LoreRoles", role), addresses[name]) for role in needed)
         for name, needed in ROLES.items()
     }
-    funded = {name: reader.web3.eth.get_balance(address) > 0 for name, address in addresses.items()}
+    wallets = {n: a for n, a in addresses.items() if str(a).startswith("0x")}  # skip e.g. the Turnkey public key
+    funded = {name: reader.web3.eth.get_balance(address) > 0 for name, address in wallets.items()}
     return {"roles": roles, "funded": funded, "ready": all(roles.values()) and all(funded.values())}
 
 

@@ -115,3 +115,15 @@ def test_role_check_reports_missing_roles_and_gas():
     assert good["ready"] is True
     bad = check_roles.check(Reader(), {"gateway": "0xa", "verifier": "0xb", "curator": "0xc"})
     assert bad["ready"] is False and bad["roles"]["curator"] is False and bad["funded"]["verifier"] is False
+
+
+def test_role_check_ignores_non_wallet_entries_like_the_turnkey_public_key():
+    class Reader:
+        web3 = SimpleNamespace(eth=SimpleNamespace(get_balance=lambda address: 1 if address.startswith("0x") else 1 / 0))
+
+        def call(self, contract, method, *args):
+            return True if method == "hasRole" else method
+
+    report = check_roles.check(Reader(), {"gateway": "0xa", "verifier": "0xb", "curator": "0xc",
+                                          "turnkey_delegated_public_key": "02" + "ab" * 32})
+    assert report["ready"] is True and "turnkey_delegated_public_key" not in report["funded"]
