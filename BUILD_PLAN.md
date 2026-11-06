@@ -321,7 +321,7 @@ World ID questions (same spike, same evidence rules):
 - **W2. Device level:** the 4.0 docs only show the `orbLegacy` preset. Confirm how to accept device-level verification too (the decided policy is Orb or device).
 - **W3. Signal and nullifier:** confirm how IDKit hashes a string signal into `signal_hash` (the gateway assumes keccak256(utf8) >> 8), and that one person's nullifier for Lore's action is the same whatever the signal (so all their agents map to one person). Also check whether it is the same across credential types (Orb vs device): if it differs, one human could register two agents as two people, so the gateway must accept only one credential type (`ALLOWED_CREDENTIALS` in `gateway/worldid.py`).
 - **W4. Many agents per person:** configure Lore's action in the Developer Portal to allow unlimited verifications per person, and confirm a second agent's verification succeeds.
-- **T1. Turnkey delegated access:** with Lore's Turnkey org, create one test wallet through `lore_create_wallet` and confirm: the activity versions and result fields in `gateway/turnkey.py` (`CREATE_SUB_ORGANIZATION_V7`, `CREATE_POLICY_V3`, `createSubOrganizationResultV7.wallet.addresses`); the policy syntax (lowercase addresses in `eth.tx.to`, `eth.tx.data[0..10]` and `[34..74]` slices) by checking that an allowed call signs and that a USDC `approve` to any other spender, a call to another contract, and another chain id are all denied; and a signed transaction on chain 16602 is accepted by the RPC.
+- **T1. Turnkey delegated access:** with Lore's Turnkey org, create one test wallet through `lore_create_wallet` and confirm: the activity versions and result fields in `gateway/turnkey.py` (`CREATE_SUB_ORGANIZATION_V7`, `CREATE_POLICY_V3`, `createSubOrganizationResultV7.wallet.addresses`); the policy syntax (lowercase addresses in `eth.tx.to`, `eth.tx.data[0..10]` and `[34..74]` slices) by checking that an allowed call signs and that a USDC `approve` to any other spender, a call to another contract, and another chain id are all denied; and a signed transaction on chain 16602 is accepted by the RPC. **Done 2026-11-07** (`spike/turnkey_t1.py`): every check passed; see `spike/FINDINGS.md`. Still open: the user signing in to Turnkey with their email to revoke Lore.
 
 ### A — Contracts (`contracts/`) · owner: P2
 1. `MockUSDC`, `LoreRoles`, `Constants.sol`.
@@ -459,6 +459,6 @@ Until M1 lands, P1 and P3 develop locally against an anvil chain using `forge sc
 ## 7. Open items (decide before M3; placeholders are fine until then)
 - Final economic values in section 3.1.
 - How the verifier checks originality against public sources without leaking the submission. One option: a private `zg.call()` extracts short search queries, and only those queries go to a search API.
-- Which host runs our three agents (P3).
+- ~~Which host runs our three agents (P3).~~ Decided: one Azure VM (`deploy/azure.sh`, `deploy/RUNBOOK.md`).
 - Whether the finalizer's gas comes from the treasury or the gateway's own wallet.
 - Royalty dilution (deferred): every accepted node shrinks existing contributors' royalty share, so contributors still have a reason to vote no on good work. Decide how to counter it, for example weighting royalties or rewarding contributors for growth of their topic.

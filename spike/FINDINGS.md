@@ -15,6 +15,17 @@ S2 and S4 were first answered from public reads; S1, S3, S5 and S6 ran against t
 | 5. Storage from Python | **Works.** The pinned CLI launcher builds with Go 1.24; `storage_roundtrip.py` passed on Galileo: 10.8 s upload (finalized), 1.6 s download with `--proof`. On Windows the CLI needs the profile env vars (fixed in `storage.py`). |
 | 6. Attestation | `0g-compute-cli@0.9.0` (`@0gfoundation/0g-compute-ts-sdk`) `inference verify` passed for the mainnet `qwen3-embedding-8b` provider: signer matches the contract, Docker Compose hash valid, exit 0. Its steps 6-8 (image digests, dstack verifier) are manual, so exit 0 covers the automated checks only. The CLI reads its key only from `~/.0g-compute-cli/config.json`; a throwaway key works for verification. Two other providers did not answer at the time. |
 
+## T1, Turnkey delegated access (2026-11-07)
+
+`spike/turnkey_t1.py` against the live Turnkey API and Galileo: all 15 checks passed.
+
+- The activity versions and result fields in `agents/gateway/turnkey.py` work as written. Resending a request with the same `timestampMs` returns the same sub-org and wallet.
+- After setup, only the user is in the root quorum, and all 7 Lore policies exist.
+- Allowed calls sign and recover to the wallet. The policy engine denies USDC approve to another spender, `transfer`, another contract, another chain id, native value and gas above `MAX_GAS`.
+- A denial is an HTTP 403 ("insufficient permissions"), not a failed activity.
+- The gateway's `Signer` path was mined on 16602: `0x0d1959a16e7b9effba4139ded0382f4aab79913f6b7536e0b3bacb483c3a89bb`.
+- Not yet checked: whether the user can sign in to Turnkey with their email and revoke Lore.
+
 ## Answers for P1
 
 **S2, provider lookup.** Read `getService(provider)` on 0G's Compute Inference
@@ -30,8 +41,8 @@ teeSignerAcknowledged)`. [`provider_lookup.py`](provider_lookup.py) has the ABI,
 
 **The Router's providers appear to be on mainnet, not Galileo.** The Router's TeeML
 models match the mainnet records (for example `glm-5.3`, `0GM-1.0-35B-A3B` and
-`qwen3-embedding-8b`). This is an inference from matching catalogues; the docs do
-not state it, and only a live `x_0g_trace.provider` can confirm it. Lore's contracts
+`qwen3-embedding-8b`). The live S1 run confirmed it: `x_0g_trace.provider` was a mainnet
+service. Lore's contracts
 stay on 16602, so `provider_info` and `lore_check_proof` need a separate mainnet read.
 
 **S4, models.** [Router catalogue](evidence/router-models.json), fetched without a
@@ -43,17 +54,6 @@ key: 125 models. Filter on `verifiability == "TeeML"`.
   though its on-chain record says TeeML, so don't use it.
 - So a TeeML embedding model exists and `fastembed` should not be needed. Quality on
   verifier and curator fixtures is untested.
-
-## Status by question
-
-| S item | Status | Evidence | Still needed |
-|---|---|---|---|
-| 1. Router from Python | Not run | [0G's privacy guide](https://0g.ai/blog/data-privacy-on-0g-private-computer) documents the client, header and `verify_tee`. | Router key. Run a synthetic prompt through `agents/zg`. |
-| 2. Signature + signer | Partly answered | Contract and method above. One GET to a provider's `/v1/proxy/signature/<fake id>` returned `chat_id_not_found`, so the route exists although the [inference docs](https://docs.0g.ai/developer-hub/building-on-0g/compute-network/inference) omit it. | A real chat ID: recover the signer, compare with `expected_signer`, and confirm signed text equals the output. |
-| 3. Signature retention | Not run | The error text says "not found or expired", so retention is finite. Duration unknown. | Timed fetches of a real chat ID. Until then, `lore_check_proof` must rely on the stored receipt. |
-| 4. Models + embeddings | Answered, except quality | Above. | Fixture quality check with a key. |
-| 5. Storage from Python | Blocked | [SDK page](https://docs.0g.ai/developer-hub/building-on-0g/storage/sdk) lists only Go and TypeScript, so the route is the [official CLI](https://github.com/0gfoundation/0g-storage-client/blob/main/cli.md). `storage.py` is mock-tested. | Build the Go launcher, fund a wallet, run `storage_roundtrip.py` for latency. |
-| 6. Attestation | Not run | [Docs](https://docs.0g.ai/developer-hub/building-on-0g/compute-network/inference) describe `inference verify` but not its output format. `@0glabs/0g-serving-broker` is now a shim for `@0gfoundation/0g-compute-ts-sdk`. | Install a pinned CLI and run it on a real provider. |
 
 If S1 or S2 fails live, stop and escalate to the team, as workstream S requires.
 Missing credentials are an unrun check, not a pass or a failure. Never downgrade
@@ -70,7 +70,7 @@ P2 to grant them to the generated wallets.
 
 The stock CLI takes the wallet key through `--key`, which exposes it in process
 arguments, so `storage.py` passes it on stdin to a small launcher. That launcher is
-written but not built. Download always uses `--proof`. Lore's AES-GCM blob must stay
+built locally by `shared/storage_cli/build.py` and in Docker by `deploy/Dockerfile`. Download always uses `--proof`. Lore's AES-GCM blob must stay
 intact; do not use the CLI's own `--encryption-key` format.
 
 ## Running the checks
