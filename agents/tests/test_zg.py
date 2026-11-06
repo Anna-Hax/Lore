@@ -106,3 +106,23 @@ def test_a_failure_after_payment_is_not_transient_and_a_retry_never_pays_again()
     out, r = run(http, cache=Cache)  # retry: signature endpoint back
     assert out == OUTPUT and r["signer"] == TEE.address
     assert len([q for q in seen if q.url.path.endswith("/chat/completions")]) == 1  # paid exactly once
+
+
+E2EE_TEXT = "zg-sig-v1/e2ee-ct:" + "ab" * 32 + ":" + "cd" * 32
+
+
+def test_router_without_tee_verified_field_is_accepted_after_our_own_check():
+    # Live Router responses (2026-11-06) carry no x_0g_trace.tee_verified; our signer check is the verdict.
+    _, r = run(fake_network(tee_verified=None))
+    assert r["tee_verified"] is True and r["router_tee_verified"] is None
+
+
+def test_e2ee_signature_is_accepted_and_recorded_as_ciphertext_binding():
+    # The Router always seals private requests, so the TEE signs ciphertext hashes, not the plaintext.
+    out, r = run(fake_network(signed_text=E2EE_TEXT))
+    assert out == OUTPUT and r["binding"] == "e2ee-ciphertext" and r["signed_text"] == E2EE_TEXT
+
+
+def test_e2ee_signature_from_wrong_key_is_still_rejected():
+    with pytest.raises(zg.ZGError, match="not the provider's TEE signer"):
+        run(fake_network(signed_text=E2EE_TEXT, signer=IMPOSTOR))

@@ -6,6 +6,7 @@ non-private code path on purpose.
 """
 
 import json
+import re
 import time
 from datetime import UTC, datetime
 from typing import Callable
@@ -16,6 +17,9 @@ from eth_account.messages import encode_defunct
 from lore_shared.canonical import canonical_hash
 
 ROUTER = "https://router-api.0g.ai/v1"
+# The Router always end-to-end encrypts private requests ("x-0g-e2ee: sealed", spike S1/S2, 2026-11-06). The TEE then
+# signs hashes of the encrypted request and response instead of the plaintext output.
+E2EE_SIGNED = re.compile(r"zg-sig-v1/e2ee-ct:[0-9a-f]{64}:[0-9a-f]{64}")
 PRIVATE_HEADERS = {"X-0G-Provider-Trust-Mode": "private"}
 
 # provider address -> (provider base url, TEE signer address from its on-chain Service record).
@@ -40,18 +44,24 @@ def recover_signer(text: str, signature: str) -> str:
     return Account.recover_message(encode_defunct(text=text), signature=signature)
 
 
-def check_signature(signed_text: str, signature: str, expected_signer: str, output: str) -> str:
-    """Raise ZGError unless the TEE signed exactly `output`. Returns the recovered signer."""
+def check_signature(signed_text: str, signature: str, expected_signer: str, output: str) -> tuple[str, str]:
+    """Raise ZGError unless the provider's on-chain TEE signer signed this exchange.
+
+    Returns (signer, binding). binding is "plaintext" when the TEE signed exactly `output`, or "e2ee-ciphertext" when
+    it signed the end-to-end encrypted exchange (zg-sig-v1/e2ee-ct:<request hash>:<response hash>); the plaintext is
+    then not bound by the signature, and receipts say so.
+    """
     try:
         signer = recover_signer(signed_text, signature)
     except Exception as e:  # malformed signature
         raise ZGError(f"unrecoverable signature: {e}") from e
     if signer.lower() != expected_signer.lower():
         raise ZGError(f"signer {signer} is not the provider's TEE signer {expected_signer}")
-    # ponytail: exact match per the docs; spike S confirms the signed text format.
-    if signed_text != output:
-        raise ZGError("signed text does not match the output we received")
-    return signer
+    if signed_text == output:
+        return signer, "plaintext"
+    if E2EE_SIGNED.fullmatch(signed_text):
+        return signer, "e2ee-ciphertext"
+    raise ZGError("signed text does not match the output we received")
 
 
 def call(
@@ -81,15 +91,15 @@ def call(
         paid = _pay(http, body, api_key, retries, sleep)
         if cache:
             cache.put(request_hash, paid)
-    if paid["tee_verified"] is not True:
-        raise ZGError(f"router did not verify the TEE signature (tee_verified={paid['tee_verified']!r})")
+    if paid["tee_verified"] is False:  # the Router omits the field today; only an explicit False is a verdict
+        raise ZGError("router did not verify the TEE signature (tee_verified=False)")
     output = paid["output"]
     try:
         url, tee_signer = provider_info(paid["provider"])
         sig = http.get(f"{url}/v1/proxy/signature/{paid['chat_id']}", params={"model": model})
         sig.raise_for_status()
         sig = sig.json()
-        signer = check_signature(sig["text"], sig["signature"], tee_signer, output)
+        signer, binding = check_signature(sig["text"], sig["signature"], tee_signer, output)
     except ZGError:
         raise
     except Exception as e:  # already paid: never let this look transient (it would be retried for free, forever)
@@ -100,7 +110,9 @@ def call(
         "provider": paid["provider"],
         "chat_id": paid["chat_id"],
         "trust_mode": "private",
-        "tee_verified": True,
+        "tee_verified": True,  # we checked the TEE signature against the provider's on-chain signer ourselves
+        "router_tee_verified": paid["tee_verified"],
+        "binding": binding,
         "signed_text": sig["text"],
         "signature": sig["signature"],
         "signer": signer,
