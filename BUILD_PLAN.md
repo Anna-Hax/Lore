@@ -38,7 +38,7 @@ Handoffs:
 - **Where things run:**
   - **User agents** are the user's own agents (any MCP-capable client: Claude Code, Cursor, ...). They connect to **Lore's hosted MCP server** at `{LORE_PUBLIC_URL}/mcp`.
   - **Login is the user's World ID, and nothing else.** The MCP server uses standard MCP OAuth: on first connect the client opens Lore's `/login` page, the user approves in World App, and the client gets a token whose subject is their person (the World ID nullifier for Lore's action, the same id `PersonRegistry` uses). There is no wallet login.
-  - **Transactions are not signed yet.** Tools that change chain state return unsigned transactions. Signing (a password manager) and linking wallets to a person are the next step.
+  - **Wallets: Turnkey with delegated access.** `lore_create_wallet` gives each person a wallet in their own Turnkey sub-organization. The user is its only root (reachable by their email) and can revoke Lore at any time. Lore's delegated key may sign only Lore's calls on Lore's chain: USDC `approve` with Lore's Submissions or Access contract as spender, plus `submit`, `vote`, `buy`, `claim` and `report`, enforced by Turnkey's policy engine. The policies also require zero native value and cap gas per transaction. They limit where funds can go (only Lore's contracts), not how much: whoever holds the delegated key can spend the wallet on Lore actions, so users keep only what they mean to spend on Lore. The gateway links the new wallet to the person in `PersonRegistry`. The user funds it with 0G (gas) and USDC.
   - **Lore's agents** (gateway with the MCP server, verifier, curator) are hosted by us. The verifier and curator reach the gateway's internal API with a shared service secret.
 - **Gate:** before submitting, an agent must finish its pending vote tasks; those come only from topics it has contributed to.
   - The gateway enforces this when a submission is prepared (`lore_submit`), per person across all their wallets.
@@ -279,7 +279,7 @@ One service (`agents/gateway`). Users only ever reach it through MCP; Lore's own
 
 ### 3.5 MCP tools (hosted)
 
-Every tool acts as the logged-in person, through the wallets linked to that person in `PersonRegistry`. When a person has several wallets, tools that need one take a `wallet` argument. Tools that change chain state return unsigned transactions (`{chain_id, from, to, value, data}`) until signing lands.
+Every tool acts as the logged-in person, through the wallets linked to that person in `PersonRegistry`. When a person has several wallets, tools that need one take a `wallet` argument. Tools that change chain state sign with Turnkey, send, wait for the receipt and return the transaction hashes.
 
 | Tool | Does |
 |---|---|
@@ -287,12 +287,13 @@ Every tool acts as the logged-in person, through the wallets linked to that pers
 | `lore_whoami` | The person and their linked wallets. |
 | `lore_list_topics`, `lore_get_topic {topic_id}` | Public metadata, each title and description with its proof badge (model, provider, TEE verified, private). |
 | `lore_my_vote_tasks`, `lore_get_vote_task {sub_id}` | The vote task with the verifier's verdict, reasons and proof badges; the text is watermarked to the voter. |
-| `lore_vote {sub_id, approve}` | Unsigned `vote` from an eligible wallet. |
-| `lore_submit {text, topic_id?, wallet?, confirm}` | Gates (World ID wallet, vote tasks, indexer lag, reserved characters), encrypts and stores the text, returns unsigned USDC `approve` and `submit`. Must be submitted within 10 minutes. |
-| `lore_buy {topic_id, wallet?, confirm}` | Unsigned USDC `approve` and `buy`. |
+| `lore_create_wallet {email}`, `lore_wallet` | Create the person's Turnkey wallet (once) and link it on-chain; show wallets, whether Lore can sign for each, and their 0G and USDC balances. |
+| `lore_vote {sub_id, approve}` | Sends `vote` from an eligible wallet. |
+| `lore_submit {text, topic_id?, wallet?, confirm}` | Gates (World ID wallet, vote tasks, indexer lag, reserved characters), encrypts and stores the text, then sends USDC `approve` and `submit`. |
+| `lore_buy {topic_id, wallet?, confirm}` | Sends USDC `approve` and `buy`. |
 | `lore_read_topic {topic_id}` | Requires `hasAccess` on one of the person's wallets. Every node is watermarked to that wallet. |
-| `lore_claimable`, `lore_claim` | Royalties owed; one unsigned `claim` per contributing wallet. |
-| `lore_report_leak {topic_id, text, wallet?}` | Stores the evidence, returns an unsigned `report`. |
+| `lore_claimable`, `lore_claim` | Royalties owed; sends one `claim` per contributing wallet. |
+| `lore_report_leak {topic_id, text, wallet?}` | Stores the evidence and sends `report`. |
 | `lore_check_proof {root, claimed_output_json?}` | Re-checks a receipt against 0G's on-chain provider record (and optionally the output Lore claims it produced). |
 
 Paying tools ask for `confirm=true` first, stating the amount, for example "This stakes 10 USDC".
@@ -319,6 +320,7 @@ World ID questions (same spike, same evidence rules):
 - **W2. Device level:** the 4.0 docs only show the `orbLegacy` preset. Confirm how to accept device-level verification too (the decided policy is Orb or device).
 - **W3. Signal and nullifier:** confirm how IDKit hashes a string signal into `signal_hash` (the gateway assumes keccak256(utf8) >> 8), and that one person's nullifier for Lore's action is the same whatever the signal (so all their agents map to one person). Also check whether it is the same across credential types (Orb vs device): if it differs, one human could register two agents as two people, so the gateway must accept only one credential type (`ALLOWED_CREDENTIALS` in `gateway/worldid.py`).
 - **W4. Many agents per person:** configure Lore's action in the Developer Portal to allow unlimited verifications per person, and confirm a second agent's verification succeeds.
+- **T1. Turnkey delegated access:** with Lore's Turnkey org, create one test wallet through `lore_create_wallet` and confirm: the activity versions and result fields in `gateway/turnkey.py` (`CREATE_SUB_ORGANIZATION_V7`, `CREATE_POLICY_V3`, `createSubOrganizationResultV7.wallet.addresses`); the policy syntax (lowercase addresses in `eth.tx.to`, `eth.tx.data[0..10]` and `[34..74]` slices) by checking that an allowed call signs and that a USDC `approve` to any other spender, a call to another contract, and another chain id are all denied; and a signed transaction on chain 16602 is accepted by the RPC.
 
 ### A — Contracts (`contracts/`) · owner: P2
 1. `MockUSDC`, `LoreRoles`, `Constants.sol`.
@@ -344,7 +346,7 @@ World ID questions (same spike, same evidence rules):
 4. **MCP server and login** exactly as in sections 3.4 and 3.5: OAuth 2.1 with World ID as the only login, every tool acting as the token's person, and the vote-before-submit gate per person.
 5. **Internal API** for the verifier and curator, authenticated with the shared service secret.
 
-**Done when** an MCP client connected to the hosted server, logged in with World ID, can browse, read, vote and prepare every transaction of the full loop against the deployed contracts (with C and D mocked as needed). Sending the transactions waits for the signing step.
+**Done when** an MCP client connected to the hosted server, logged in with World ID, can create and fund a Turnkey wallet and run the full loop (buy, read, submit, vote, claim, report) against the deployed contracts (with C and D mocked as needed).
 
 ### C — Content: crypto, watermarking, leak tracing, storage · libraries: P3, wiring into the gateway: P1
 1. **(P3)** `crypto.py`: `encrypt_node`, `decrypt_node`, `content_hash`. Include a round-trip test.
@@ -420,7 +422,7 @@ Both agents keep their prompts in versioned files (`prompts/v1.md`) and record t
 6. A new contract deployment means fresh gateway and job databases. They record the deployment they were built for and refuse to start against another one; delete them and let them re-index.
 
 ### E — Integration and end-to-end (`e2e/`) · owner: P3
-`e2e/run.py` drives three test agents, each using only the hosted MCP server and funded with MockUSDC, and asserts the results. (It needs the signing step before it can send transactions.)
+`e2e/run.py` drives three test agents, each using only the hosted MCP server with a Turnkey wallet funded with MockUSDC and 0G, and asserts the results. (It must be redone for the hosted MCP; it still targets the old local lore-mcp.)
 1. Agent 1 creates a new topic, which the verifier accepts. Agent 1 is now a contributor.
 2. Agent 2 buys the topic and reads it. Agent 1 claims royalties.
 3. Agent 2 submits a follow-up. The submission is gated until Agent 2 has no vote tasks, which it doesn't.
