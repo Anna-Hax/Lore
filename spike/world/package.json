@@ -1,0 +1,8 @@
+{
+  "name": "lore-spike-world",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@worldcoin/idkit-core": "4.6.0"
+  }
+}
