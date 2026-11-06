@@ -106,3 +106,64 @@ def test_a_failure_after_payment_is_not_transient_and_a_retry_never_pays_again()
     out, r = run(http, cache=Cache)  # retry: signature endpoint back
     assert out == OUTPUT and r["signer"] == TEE.address
     assert len([q for q in seen if q.url.path.endswith("/chat/completions")]) == 1  # paid exactly once
+
+
+E2EE_TEXT = "zg-sig-v1/e2ee-ct:" + "ab" * 32 + ":" + "cd" * 32
+
+
+def test_router_without_tee_verified_field_is_accepted_after_our_own_check():
+    # Live Router responses (2026-11-06) carry no x_0g_trace.tee_verified; our signer check is the verdict.
+    _, r = run(fake_network(tee_verified=None))
+    assert r["tee_verified"] is True and r["router_tee_verified"] is None
+
+
+def test_e2ee_signature_is_accepted_and_recorded_as_ciphertext_binding():
+    # The Router always seals private requests, so the TEE signs ciphertext hashes, not the plaintext.
+    out, r = run(fake_network(signed_text=E2EE_TEXT))
+    assert out == OUTPUT and r["binding"] == "e2ee-ciphertext" and r["signed_text"] == E2EE_TEXT
+
+
+def test_e2ee_signature_from_wrong_key_is_still_rejected():
+    with pytest.raises(zg.ZGError, match="not the provider's TEE signer"):
+        run(fake_network(signed_text=E2EE_TEXT, signer=IMPOSTOR))
+
+
+def fake_embed_network(*, signer=TEE, signed_text=E2EE_TEXT):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/embeddings"):
+            assert request.headers["X-0G-Provider-Trust-Mode"] == "private"
+            return httpx.Response(200, headers={"ZG-Res-Key": "emb-1"},
+                                  json={"data": [{"embedding": [0.1, 0.2]}], "x_0g_trace": {"provider": "0xProvider"}})
+        sig = signer.sign_message(encode_defunct(text=signed_text)).signature.to_0x_hex()
+        return httpx.Response(200, json={"text": signed_text, "signature": sig})
+    return httpx.Client(transport=httpx.MockTransport(handler))
+
+
+def test_embed_is_private_and_signature_checked():
+    vec = zg.embed("t", model="m", api_key="k", provider_info=lambda p: (PROVIDER_URL, TEE.address), http=fake_embed_network())
+    assert vec == [0.1, 0.2]
+    with pytest.raises(zg.ZGError, match="not the provider's TEE signer"):
+        zg.embed("t", model="m", api_key="k", provider_info=lambda p: (PROVIDER_URL, TEE.address),
+                 http=fake_embed_network(signer=IMPOSTOR))
+
+
+def test_rate_limit_backs_off_and_then_raises_unavailable_not_a_paid_failure():
+    def handler(request):
+        return httpx.Response(429, json={"error": "rate limited"})
+    with pytest.raises(zg.ZGUnavailable):
+        run(httpx.Client(transport=httpx.MockTransport(handler)))
+
+
+def test_a_cached_response_older_than_its_signature_window_is_paid_again(monkeypatch):
+    seen, cache = [], {}
+
+    class Cache:
+        get = staticmethod(cache.get)
+        put = staticmethod(cache.__setitem__)
+
+    http = fake_network(seen=seen)
+    run(http, cache=Cache)
+    (key,) = cache
+    cache[key]["paid_at"] -= zg.SIGNATURE_FRESH_SECONDS + 1  # the provider has dropped that signature by now
+    run(http, cache=Cache)
+    assert len([q for q in seen if q.url.path.endswith("/chat/completions")]) == 2

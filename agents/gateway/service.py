@@ -179,7 +179,16 @@ class Service:
             } for n in nodes]}
 
     def receipt(self, root: str) -> dict:
-        return json.loads(self.storage.download(root))
+        """An InferenceReceipt from 0G Storage. Immutable (content-addressed), so cached; one retry on a flaky read."""
+        cache = self.__dict__.setdefault("_receipts", {})
+        if root not in cache:
+            try:
+                raw = self.storage.download(root)
+            except Exception:
+                time.sleep(1)
+                raw = self.storage.download(root)
+            cache[root] = json.loads(raw)
+        return cache[root]
 
     # --- voting ---
     def vote_tasks(self, person: str) -> list[dict]:
@@ -325,6 +334,96 @@ class Service:
         except Exception:  # RPC down or provider unknown: "incomplete", never a false "pass"
             onchain = None
         return proof.check(receipt, onchain, claim)
+
+    # --- public explorer (no plaintext: public metadata, verdicts and proofs only) ---
+    def _cached(self, key: str, fn):
+        cache = self.__dict__.setdefault("_public_cache", {})
+        if key not in cache:
+            cache[key] = fn()
+        return cache[key]
+
+    def proof_summary(self, root: str | None) -> dict | None:
+        """A receipt's proof, checked against 0G's on-chain record, for the explorer. Cached: receipts are immutable."""
+        if not root:
+            return None
+
+        def build():
+            r = self.receipt(root)
+            c = self.check_proof(root)
+            return {"status": c["status"], "model": r.get("model"), "provider": r.get("provider"),
+                    "signer": r.get("signer"), "binding": c.get("binding"), "private": r.get("trust_mode") == "private",
+                    "root": root}
+
+        try:
+            return self._cached(f"proof:{root}", build)
+        except Exception:
+            return {"status": "incomplete", "model": None, "provider": None, "signer": None, "binding": None,
+                    "private": None, "root": root}
+
+    def _report(self, root: str | None) -> dict | None:
+        if not root:
+            return None
+        try:
+            rep = self._cached(f"report:{root}", lambda: json.loads(self.storage.download(root)))
+        except Exception:
+            return None
+        best = rep.get("max_similarity") or {}
+        return {"pass": rep.get("passed"), "checks": rep.get("checks"),
+                "max_similarity": best.get("score") if isinstance(best, dict) else best,
+                "proof": self.proof_summary(rep.get("verdict_receipt"))}
+
+    def overview(self, chain_info: dict, params: dict, mcp_url: str) -> dict:
+        with self.tx() as conn:
+            topics = conn.execute("SELECT * FROM topics ORDER BY id").fetchall()
+            nodes = conn.execute("SELECT * FROM nodes ORDER BY id").fetchall()
+            edges = conn.execute("SELECT child, parent FROM edges").fetchall()
+            subs = conn.execute("SELECT * FROM submissions ORDER BY id").fetchall()
+            votes = conn.execute("SELECT sub_id, approve, COUNT(*) AS n FROM votes GROUP BY sub_id, approve").fetchall()
+            buys = conn.execute("SELECT topic_id, COUNT(*) AS n FROM purchases GROUP BY topic_id").fetchall()
+            persons = {r[0]: r[1] for r in conn.execute("SELECT agent, person FROM persons")}
+            reports = conn.execute("SELECT * FROM reports ORDER BY id").fetchall()
+        parents: dict[int, list[int]] = {}
+        for e in edges:
+            parents.setdefault(e["child"], []).append(e["parent"])
+        tally = {(v["sub_id"], v["approve"]): v["n"] for v in votes}
+        bought = {b["topic_id"]: b["n"] for b in buys}
+        people_by_topic: dict[int, set] = {}
+        for n in nodes:
+            people_by_topic.setdefault(n["topic_id"], set()).add(persons.get(n["contributor"], n["contributor"]))
+
+        def m(raw):
+            return meta(raw) or {}
+
+        out_topics = [{"topic_id": t["id"], "title": m(t["meta_json"]).get("title"),
+                       "description": m(t["meta_json"]).get("description"),
+                       "node_count": sum(1 for n in nodes if n["topic_id"] == t["id"]), "buyers": bought.get(t["id"], 0),
+                       "contributors": len(people_by_topic.get(t["id"], ())),
+                       "proof": self.proof_summary(m(t["meta_json"]).get("receipt"))} for t in topics]
+        out_nodes = [{"node_id": n["id"], "topic_id": n["topic_id"], "contributor": n["contributor"],
+                      "title": m(n["meta_json"]).get("title"), "description": m(n["meta_json"]).get("description"),
+                      "parents": sorted(parents.get(n["id"], [])),
+                      "proof": self.proof_summary(m(n["meta_json"]).get("receipt"))} for n in nodes]
+        out_subs = [{"sub_id": x["id"], "topic_id": x["topic_id"], "submitter": x["submitter"], "status": x["status"],
+                     "verifier_pass": None if x["passed"] is None else bool(x["passed"]),
+                     "yes": tally.get((x["id"], 1), 0), "no": tally.get((x["id"], 0), 0), "eligible": x["eligible"],
+                     "node_id": x["node_id"], "parents": json.loads(x["parents"]) if x["parents"] else [],
+                     "submitted_at": x["submitted_at"], "reported_at": x["reported_at"],
+                     "report": self._report(x["report_hash"])} for x in subs]
+        out_reports = [{"report_id": r["id"], "topic_id": r["topic_id"], "matched": r["matched_wallet"] is not None,
+                        "matched_wallet": r["matched_wallet"], "score_bps": r["score_bps"]} for r in reports]
+        purchases = sum(bought.values())
+        volume = purchases * params["topic_price"]
+        return {
+            "generated_at": self.now(), "chain": chain_info, "params": params, "mcp_url": mcp_url,
+            "stats": {"topics": len(topics), "nodes": len(nodes), "submissions": len(subs),
+                      "accepted": sum(1 for x in subs if x["status"] == "Accepted"),
+                      "rejected": sum(1 for x in subs if x["status"] == "Rejected"),
+                      "in_review": sum(1 for x in subs if x["status"] in ("Pending", "Reported")),
+                      "people": len(set(persons.values())), "purchases": purchases, "volume_usdc": volume,
+                      "royalties_usdc": volume - volume * params["platform_cut_bps"] // 10_000,
+                      "leak_reports": len(reports), "leaks_traced": sum(1 for r in reports if r["matched_wallet"])},
+            "topics": out_topics, "nodes": out_nodes, "submissions": out_subs, "reports": out_reports,
+        }
 
     # --- inbox ---
     def inbox(self, person: str, take: bool = True) -> dict:

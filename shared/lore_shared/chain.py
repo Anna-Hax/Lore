@@ -13,7 +13,7 @@ def load_deployment(chain_id: int) -> dict:
 
 
 def load_abi(name: str) -> list:
-    if name not in {"Access", "LoreRoles", "Reports", "Royalties", "Submissions", "TopicGraph", "MockUSDC"}:
+    if name not in {"Access", "LoreRoles", "Reports", "Royalties", "Submissions", "TopicGraph", "MockUSDC", "PersonRegistry"}:
         raise ValueError("unknown Lore contract")
     return json.loads(files("lore_shared").joinpath(f"abi/{name}.json").read_text())
 
@@ -50,6 +50,7 @@ class ChainReader:
             ("Access", "usdc", "USDC"), ("Submissions", "graph", "TopicGraph"),
             ("Submissions", "usdc", "USDC"), ("Royalties", "graph", "TopicGraph"),
             ("Royalties", "access", "Access"), ("Reports", "graph", "TopicGraph"),
+            ("TopicGraph", "registry", "PersonRegistry"), ("PersonRegistry", "roles", "LoreRoles"),
         ]
         for contract, method, target in wiring:
             if self.call(contract, method).lower() != addresses[target].lower():

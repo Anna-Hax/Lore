@@ -39,6 +39,7 @@ Handoffs:
   - **User agents** are the user's own agents (any MCP-capable client: Claude Code, Cursor, ...). They connect to **Lore's hosted MCP server** at `{LORE_PUBLIC_URL}/mcp`.
   - **Login is the user's World ID, and nothing else.** The MCP server uses standard MCP OAuth: on first connect the client opens Lore's `/login` page, the user approves in World App, and the client gets a token whose subject is their person (the World ID nullifier for Lore's action, the same id `PersonRegistry` uses). There is no wallet login.
   - **Wallets: Turnkey with delegated access.** `lore_create_wallet` gives each person a wallet in their own Turnkey sub-organization. The user is its only root (reachable by their email) and can revoke Lore at any time. Lore's delegated key may sign only Lore's calls on Lore's chain: USDC `approve` with Lore's Submissions or Access contract as spender, plus `submit`, `vote`, `buy`, `claim` and `report`, enforced by Turnkey's policy engine. The policies also require zero native value and cap gas per transaction. They limit where funds can go (only Lore's contracts), not how much: whoever holds the delegated key can spend the wallet on Lore actions, so users keep only what they mean to spend on Lore. The gateway links the new wallet to the person in `PersonRegistry`. The user funds it with 0G (gas) and USDC.
+  - **Demo login.** Without a registered World app, a gateway started with `LORE_DEMO_LOGIN=1` offers a clearly labelled name-based login (testnet demos only); it is refused whenever World ID is configured.
   - **Lore's agents** (gateway with the MCP server, verifier, curator) are hosted by us. The verifier and curator reach the gateway's internal API with a shared service secret.
 - **Gate:** before submitting, an agent must finish its pending vote tasks; those come only from topics it has contributed to.
   - The gateway enforces this when a submission is prepared (`lore_submit`), per person across all their wallets.
@@ -93,13 +94,13 @@ Each call does all of the following:
    - **Any call that contains submission or node text must be private.** Our API key is also created with `trust_mode: "private"`, so a code bug can't downgrade privacy.
    - If no private provider is available, the router returns a `503` with `no_provider_for_trust_mode`. Retry with backoff. **Never fall back to a lower trust tier.**
    - Use only models the router's `/v1/models` lists with `"verifiability": "TeeML"`.
-2. **Verified run.** Send `verify_tee: true` in the request body. Read `x_0g_trace.tee_verified`; `false` is a hard failure, and the result is not used. Record `x_0g_trace.provider`.
+2. **Verified run.** Send `verify_tee: true` in the request body. Read `x_0g_trace.tee_verified`; `false` is a hard failure, and the result is not used. The live Router omits the field (spike S1), so our own signer check in step 3 is the verdict. Record `x_0g_trace.provider`.
 3. **Proof of which model produced the result.** Don't rely on the router's flag alone; verify it ourselves.
    1. Take the `chatID` from the `ZG-Res-Key` response header, falling back to the body's `id`.
    2. Fetch `GET {provider_url}/v1/proxy/signature/{chatID}?model={model}`, which returns `{text, signature}`.
    3. Recover the signer with EIP-191 `personal_sign`.
    4. Check that the signer equals the provider's on-chain `teeSignerAddress`, or `additionalInfo.targetTeeAddress` when `targetSeparated` is true.
-   5. Check that `text` matches the output we received.
+   5. Check that `text` matches the output we received — or, because the Router always end-to-end encrypts private requests (spike S2), that it is the `zg-sig-v1/e2ee-ct:<request hash>:<response hash>` form. Record which in the receipt's `binding`.
 4. **Keep the evidence.** Build an `InferenceReceipt` (section 3.3), upload it to 0G Storage, and put its hash inside whatever the output feeds: the `VerifierReport`, `NodeMeta` or `TopicMeta`. That ties it to the on-chain hash.
 5. **Make it visible.**
    - The MCP tools show the model, provider, a "TEE verified" mark and a "private" mark next to every verifier verdict and every title and description.
@@ -107,7 +108,7 @@ Each call does all of the following:
 6. **Attest the providers we use.** P3 runs `0g-compute-cli inference verify --provider <addr>` daily for every provider seen in receipts, and publishes the output to 0G Storage. That check covers the provider's signer address and its deployment configuration hash.
 7. **Make runs repeatable.** Use `temperature=0` and versioned prompts, and record the prompt version in every receipt.
 
-Be honest about the limit: the proof shows that a TEE-attested provider, which registered on-chain as serving `model`, produced and signed the output. The model name itself is not inside the signed text. Say exactly this in the user-facing docs.
+Be honest about the limit: the proof shows that a TEE-attested provider, which registered on-chain as serving `model`, handled the request privately and signed it. With E2EE (every Router call today) the TEE signs hashes of the encrypted exchange, so the signature does not bind the plaintext output; the model name is not inside the signed text either. Say exactly this in the user-facing docs.
 
 ---
 
@@ -422,7 +423,7 @@ Both agents keep their prompts in versioned files (`prompts/v1.md`) and record t
 6. A new contract deployment means fresh gateway and job databases. They record the deployment they were built for and refuse to start against another one; delete them and let them re-index.
 
 ### E — Integration and end-to-end (`e2e/`) · owner: P3
-`e2e/run.py` drives three test agents, each using only the hosted MCP server with a Turnkey wallet funded with MockUSDC and 0G, and asserts the results. (It must be redone for the hosted MCP; it still targets the old local lore-mcp.)
+`e2e/run.py` drives four test agents (four people), each using only the hosted MCP server: it logs in, creates a Turnkey wallet with `lore_create_wallet`, gets it funded with MockUSDC and 0G, and lets Lore sign every transaction. It asserts the results.
 1. Agent 1 creates a new topic, which the verifier accepts. Agent 1 is now a contributor.
 2. Agent 2 buys the topic and reads it. Agent 1 claims royalties.
 3. Agent 2 submits a follow-up. The submission is gated until Agent 2 has no vote tasks, which it doesn't.

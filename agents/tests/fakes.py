@@ -9,6 +9,15 @@ class FakeChain:
         self.access, self.since, self.roles, self.sent, self.events = set(), {}, set(), [], []
         self.persons = {}  # agent (lowercase) -> World ID person
         self.w3 = Web3
+        self.chain_id = 16602
+
+    @staticmethod
+    def _a(addr):
+        return Web3.to_checksum_address(addr)
+
+    def params(self):
+        return {"stake": self.stake_amount, "stake_fee": 500000, "topic_price": self.price, "platform_cut_bps": 1000,
+                "quorum_bps": 5000, "voting_window": self.window}
 
     def has_access(self, topic_id, addr):
         return (topic_id, addr.lower()) in self.access

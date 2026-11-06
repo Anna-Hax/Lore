@@ -1,42 +1,49 @@
-"""BUILD_PLAN workstream E: three agents drive Lore using only lore-mcp, then we assert the chain.
+"""BUILD_PLAN workstream E: four people's agents drive Lore through the hosted MCP server, then we assert the chain.
 
-PAUSED: lore-mcp was replaced by the hosted MCP server (World ID login, unsigned transactions until the
-signing step). This runner must be redone against the hosted server once signing exists; main() refuses to
-run until then. The helpers below and their tests still stand.
+Each agent logs in (OAuth; the gateway's labelled demo login when World ID is not configured) and creates its
+Turnkey wallet with lore_create_wallet, exactly like a user's agent would; Lore signs every transaction from it.
+Only gas (0G) and MockUSDC funding happen outside MCP. The gateway needs Lore's Turnkey keys (BUILD_PLAN spike T1).
 
-Needs the hosted gateway, verifier and curator running, plus gas on three wallets:
-    E2E_AGENT1_KEY, E2E_AGENT2_KEY, E2E_AGENT3_KEY, LORE_GATEWAY_URL
-    E2E_MCP_COMMAND (default "uvx lore-mcp"), LORE_CHAIN_ID (default 16602), LORE_RPC (optional)
+    python deploy/run_local.py                                   # in one terminal: gateway, verifier, curator
+    uv run --project agents --python 3.12 python e2e/run.py      # in another
 
-    uv run --project shared --locked --group platform python e2e/run.py
-    ... python e2e/run.py --check    # only start lore-mcp and compare its tool list; no chain writes
-
-Only MockUSDC funding happens outside MCP, as the plan allows. Each run uses fresh text,
-because the contract refuses an exact contentHash twice.
+Env: LORE_GATEWAY_URL (default http://127.0.0.1:8080), LORE_CHAIN_ID (default 16602), E2E_TAG (default random;
+"none" submits the corpus text as is, for a fresh showcase deployment), E2E_TIMEOUT (seconds per wait, default 900).
+E2E_EMAIL_DOMAIN (default example.com) names each agent's Turnkey user (lore-e2e-<name>@<domain>); gas and MockUSDC
+come from DEPLOYER_PRIVATE_KEY in contracts/.env.
+    ... python e2e/run.py --check    # log in and list the MCP tools only; no chain writes
 """
 
 import argparse
 import asyncio
-from contextlib import AsyncExitStack
+import base64
+import hashlib
 import json
 import os
+from pathlib import Path
 import re
 import secrets
-import shlex
+import sys
 import time
+from urllib.parse import parse_qs, urlparse
 
 from eth_account import Account
-from mcp import ClientSession, StdioServerParameters, stdio_client
 
 from lore_shared.chain import ChainReader
 from lore_shared.watermark import FRAME, ONE, ZERO
 
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import corpus  # noqa: E402
+
 TOOLS = {
-    "lore_list_topics", "lore_get_topic", "lore_my_vote_tasks", "lore_get_vote_task", "lore_vote", "lore_submit",
-    "lore_buy", "lore_read_topic", "lore_claimable", "lore_claim", "lore_report_leak", "lore_check_proof",
+    "lore_inbox", "lore_whoami", "lore_create_wallet", "lore_wallet", "lore_list_topics", "lore_get_topic", "lore_my_vote_tasks",
+    "lore_get_vote_task", "lore_vote", "lore_submit", "lore_buy", "lore_read_topic", "lore_claimable", "lore_claim",
+    "lore_report_leak", "lore_check_proof",
 }
 PENDING, REPORTED, ACCEPTED, REJECTED = range(4)
 TIMEOUT = float(os.environ.get("E2E_TIMEOUT", 900))
+PEOPLE = ("ada", "ben", "chen", "dana")
 
 
 def research(subject: str, tag: str) -> str:
@@ -57,34 +64,73 @@ def three_sentences(text: str) -> str:
     return text[ends[0]:ends[3]].strip()
 
 
+def say(msg: str) -> None:
+    print(f"{time.strftime('%H:%M:%S')}  {msg}", flush=True)
+
+
+# --- login: OAuth 2.1 + PKCE against the gateway, finished through its demo login page ---
+def login(gateway: str, name: str) -> str:
+    import httpx
+
+    with httpx.Client(base_url=gateway, timeout=30, follow_redirects=False) as h:
+        redirect_uri = "http://127.0.0.1:9/callback"
+        client = h.post("/register", json={"client_name": f"lore-e2e-{name}", "redirect_uris": [redirect_uri],
+                                           "grant_types": ["authorization_code", "refresh_token"],
+                                           "response_types": ["code"], "token_endpoint_auth_method": "none"})
+        client.raise_for_status()
+        client_id = client.json()["client_id"]
+        verifier = secrets.token_urlsafe(48)
+        challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+        state = secrets.token_urlsafe(16)
+        r = h.get("/authorize", params={"response_type": "code", "client_id": client_id, "redirect_uri": redirect_uri,
+                                        "code_challenge": challenge, "code_challenge_method": "S256", "state": state,
+                                        "scope": "lore", "resource": f"{gateway}/mcp"})
+        if r.status_code not in (302, 307):
+            raise RuntimeError(f"authorize: {r.status_code} {r.text[:200]}")
+        pending = parse_qs(urlparse(r.headers["location"]).query)["pending"][0]
+        done = h.post("/login/demo", params={"pending": pending}, json={"name": name})
+        if done.status_code != 200:
+            raise RuntimeError(f"demo login refused ({done.status_code}): is World ID configured on this gateway?")
+        q = parse_qs(urlparse(done.json()["redirect"]).query)
+        assert q["state"][0] == state, "OAuth state mismatch"
+        tok = h.post("/token", data={"grant_type": "authorization_code", "code": q["code"][0], "client_id": client_id,
+                                     "redirect_uri": redirect_uri, "code_verifier": verifier, "resource": f"{gateway}/mcp"})
+        tok.raise_for_status()
+        return tok.json()["access_token"]
+
+
 class Agent:
-    def __init__(self, name: str, key: str, session: ClientSession):
-        self.name, self.key, self.session = name, key, session
-        self.address = Account.from_key(key).address
+    """One person's agent: an MCP session as that person, with a Lore (Turnkey) wallet that Lore signs from."""
+
+    def __init__(self, name: str, session, reader: ChainReader):
+        self.name, self.session, self.reader = name, session, reader
+        self.address = None  # set by create_wallet
 
     async def tool(self, name: str, **arguments):
         result = await self.session.call_tool(name, arguments)
         text = "".join(getattr(item, "text", "") for item in result.content)
         if result.is_error:
             raise RuntimeError(f"{self.name} {name}: {text}")
-        if result.structured_content is not None:
-            data = result.structured_content
+        data = result.structured_content
+        if data is not None:
             return data.get("result", data) if set(data) == {"result"} else data
-        return text
+        try:
+            return json.loads(text)
+        except ValueError:
+            return text
 
+    async def act(self, tool: str, **arguments):
+        """A tool that changes chain state: Lore signs and sends, and returns once every transaction is mined."""
+        out = await self.tool(tool, **arguments)
+        assert out.get("tx_hashes"), f"{self.name}: {tool} sent nothing"
+        return out
 
-async def start(stack: AsyncExitStack, name: str, key: str, gateway: str) -> Agent:
-    command = shlex.split(os.environ.get("E2E_MCP_COMMAND", "uvx lore-mcp"))
-    env = {"PATH": os.environ["PATH"], "HOME": os.environ.get("HOME", "/tmp"), "LORE_PRIVATE_KEY": key,
-           "LORE_GATEWAY_URL": gateway, "LORE_CHAIN_ID": os.environ.get("LORE_CHAIN_ID", "16602"),
-           "LORE_STATE": f"/tmp/lore-e2e-{name}.json"}
-    if os.environ.get("LORE_RPC"):
-        env["LORE_RPC"] = os.environ["LORE_RPC"]
-    params = StdioServerParameters(command=command[0], args=command[1:], env=env)
-    streams = await stack.enter_async_context(stdio_client(params))
-    session = await stack.enter_async_context(ClientSession(*streams))
-    await session.initialize()
-    return Agent(name, key, session)
+    async def create_wallet(self) -> None:
+        domain = os.environ.get("E2E_EMAIL_DOMAIN", "example.com")
+        out = await self.tool("lore_create_wallet", email=f"lore-e2e-{self.name}@{domain}")
+        self.address = self.reader.web3.to_checksum_address(out["address"])
+        who = await self.tool("lore_whoami")
+        assert out["address"].lower() in who["wallets"], f"{self.name}: wallet not linked"
 
 
 async def wait_for(description: str, check, every: float = 5):
@@ -97,137 +143,244 @@ async def wait_for(description: str, check, every: float = 5):
     raise TimeoutError(f"timed out waiting for {description}")
 
 
-class Scenario:
-    def __init__(self, reader: ChainReader, agents: list[Agent]):
-        self.reader, self.agents, self.tag = reader, agents, secrets.token_hex(4)
-        self.subs = reader.call("Submissions", "submissionCount")
+def deployer_key() -> str:
+    for line in (ROOT / "contracts" / ".env").read_text().splitlines():
+        if line.startswith("DEPLOYER_PRIVATE_KEY="):
+            return line.split("=", 1)[1].strip()
+    raise SystemExit("DEPLOYER_PRIVATE_KEY missing from contracts/.env (it pays the test agents' gas)")
 
-    def submission(self, sub_id: int) -> dict:
+
+def fund(reader: ChainReader, addresses: list[str], usdc: int) -> None:
+    """Testnet only: gas from the deployer, MockUSDC from its open mint."""
+    w3, payer = reader.web3, Account.from_key(deployer_key())
+
+    def sendtx(tx):
+        tx.update({"from": payer.address, "nonce": w3.eth.get_transaction_count(payer.address, "pending"),
+                   "gasPrice": w3.eth.gas_price, "chainId": w3.eth.chain_id})
+        tx.setdefault("gas", int(w3.eth.estimate_gas(tx) * 1.3))
+        r = w3.eth.wait_for_transaction_receipt(w3.eth.send_raw_transaction(payer.sign_transaction(tx).raw_transaction), timeout=180)
+        assert r.status == 1, "funding transaction reverted"
+
+    for a in addresses:
+        if w3.eth.get_balance(a) < w3.to_wei(0.03, "ether"):
+            sendtx({"to": a, "value": w3.to_wei(0.08, "ether"), "gas": 21000})
+        if reader.call("USDC", "balanceOf", a) < usdc:
+            sendtx({"to": reader.contracts["USDC"].address,
+                    "data": reader.contracts["USDC"].encode_abi("mint", args=[a, usdc])})
+
+
+class Scenario:
+    def __init__(self, reader: ChainReader, agents: dict[str, Agent], tag: str | None):
+        self.reader, self.a, self.tag = reader, agents, tag
+        self.results: dict = {}
+
+    def sub(self, sub_id: int) -> dict:
         return self.reader.record("Submissions", "getSubmission", sub_id)
+
+    def topic_of(self, node_id: int) -> int:
+        """A new-topic submission keeps topicId 0 on-chain; the node knows its real topic."""
+        return self.reader.record("TopicGraph", "getNode", node_id)["topicId"]
 
     def usdc(self, agent: Agent) -> int:
         return self.reader.call("USDC", "balanceOf", agent.address)
 
-    async def submit(self, agent: Agent, text: str, topic_id: int = 0) -> int:
-        await agent.tool("lore_submit", text=text, topic_id=topic_id, confirm=True)
-        self.subs += 1
-        return self.subs
+    async def submit(self, who: str, text: str, topic_id: int = 0) -> int:
+        agent = self.a[who]
+        before = self.reader.call("Submissions", "submissionCount")
+        await agent.act("lore_submit", text=corpus.tagged(text, self.tag), topic_id=topic_id, confirm=True)
+        sid = await wait_for("submission id", lambda: (n := self.reader.call("Submissions", "submissionCount")) > before and n)
+        say(f"{who} submitted sub {sid} to {'a new topic' if topic_id == 0 else f'topic {topic_id}'}")
+        return sid
 
-    async def status(self, sub_id: int, *wanted: int) -> dict:
-        return await wait_for(f"submission {sub_id} status {wanted}",
-                              lambda: (s := self.submission(sub_id))["status"] in wanted and s)
+    async def status(self, sid: int, *wanted: int) -> dict:
+        return await wait_for(f"submission {sid} in {wanted}", lambda: (s := self.sub(sid))["status"] in wanted and s)
 
-    def fund(self, amount: int) -> None:
-        web3 = self.reader.web3
-        for agent in self.agents:
-            account = Account.from_key(agent.key)
-            call = self.reader.contracts["USDC"].functions.mint(account.address, amount)
-            tx = call.build_transaction({"from": account.address, "nonce": web3.eth.get_transaction_count(account.address)})
-            receipt = web3.eth.wait_for_transaction_receipt(web3.eth.send_raw_transaction(account.sign_transaction(tx).raw_transaction))
-            assert receipt.status == 1, "MockUSDC mint failed"
+    async def vote(self, who: str, sid: int, approve: bool) -> None:
+        agent = self.a[who]
+        deadline = time.monotonic() + TIMEOUT
+        while True:
+            tasks = (await agent.tool("lore_my_vote_tasks"))["vote_tasks"]
+            if any(t.get("sub_id") == sid for t in tasks):
+                break
+            if time.monotonic() > deadline:
+                raise TimeoutError(f"{who} never got a vote task for sub {sid}")
+            await asyncio.sleep(5)
+        task = await agent.tool("lore_get_vote_task", sub_id=sid)
+        assert FRAME in task["text"], "vote-task copy is not watermarked"
+        await agent.act("lore_vote", sub_id=sid, approve=approve)
+        say(f"{who} voted {'yes' if approve else 'no'} on sub {sid} (verifier said {'pass' if task['report'].get('passed') else 'fail'})")
 
-    async def run(self) -> dict:
-        one, two, three = self.agents
-        stake = self.reader.call("Submissions", "stake")
-        fee = self.reader.call("Submissions", "stakeFee")
-        price = self.reader.call("Access", "topicPrice")
-        await asyncio.to_thread(self.fund, 10 * stake)
+    async def node_meta(self, topic_id: int, node_id: int) -> dict:
+        async def titled():
+            try:
+                t = await self.a["ada"].tool("lore_get_topic", topic_id=topic_id)
+            except RuntimeError as e:  # e.g. a 0G Storage read failed just now
+                say(f"retrying lore_get_topic: {e}")
+                return None
+            n = next((n for n in t["nodes"] if n["node_id"] == node_id), None)
+            return n if n and n.get("meta") and n["meta"].get("title") else None
 
-        # 1. Agent 1 creates a topic and the verifier accepts it.
-        start_one = self.usdc(one)
-        first = await self.submit(one, research("sequencer fees", self.tag))
-        record = await self.status(first, ACCEPTED, REJECTED)
-        assert record["status"] == ACCEPTED, "new topic was rejected"
-        assert self.usdc(one) == start_one - fee, "accepted stake was not returned minus fee"
-        topic = self.reader.call("TopicGraph", "topicCount")
-        node = (await wait_for("node 1", lambda: self.reader.call("TopicGraph", "topicNodes", topic)))[0]
-        assert self.reader.call("TopicGraph", "contributorSince", topic, one.address) > 0
+        deadline = time.monotonic() + max(TIMEOUT, 2400)  # the Router rate-limits; the curator backs off
+        while time.monotonic() < deadline:
+            if (n := await titled()):
+                return n
+            await asyncio.sleep(10)
+        raise TimeoutError(f"curator never titled node {node_id}")
 
-        # 2. Agent 2 buys and reads; Agent 1 claims royalties.
-        await two.tool("lore_buy", topic_id=topic, confirm=True)
-        copy = (await two.tool("lore_read_topic", topic_id=topic))["nodes"][0]["text"]
-        assert visible(copy) == research("sequencer fees", self.tag) and copy != visible(copy)
-        before = self.usdc(one)
-        await one.tool("lore_claim")
-        assert self.usdc(one) > before, "royalties were not paid"
+    def progress_path(self) -> Path:
+        return ROOT / "deploy" / "state" / f"e2e-progress-{self.reader.contracts['Submissions'].address.lower()}.json"
 
-        # 3. Agent 2 has no vote tasks, so its follow-up goes through.
-        assert (await two.tool("lore_my_vote_tasks"))["vote_tasks"] == []
-        follow = await self.submit(two, research("blob pricing", self.tag), topic)
-        await self.status(follow, REPORTED)
-
-        # 4. Agent 1 must vote before submitting again.
-        try:
-            await one.tool("lore_submit", text=research("blocked", self.tag), topic_id=topic, confirm=True)
-        except RuntimeError as error:
-            assert "vote" in str(error).lower(), error
+    async def run(self, resume: bool = False) -> dict:
+        r = self.results
+        saved = self.progress_path()
+        if resume and saved.exists():
+            p = json.loads(saved.read_text())
+            t1, t2, n1, n2, n4, n5, s3 = (p[k] for k in ("t1", "t2", "n1", "n2", "n4", "n5", "s3"))
+            say(f"resuming after the submission phase: topics {t1}, {t2}; nodes {n1}, {n2}, {n4}, {n5}")
         else:
-            raise AssertionError("vote gate did not stop Agent 1")
-        task = await one.tool("lore_get_vote_task", sub_id=follow)
-        await one.tool("lore_vote", sub_id=follow, approve=True)
-        await self.status(follow, ACCEPTED)
-        nodes = await wait_for("second node", lambda: (n := self.reader.call("TopicGraph", "topicNodes", topic)) and len(n) == 2 and n)
-        assert list(self.reader.call("TopicGraph", "parentsOf", nodes[1])) == [node], "edge does not point to node 1"
+            t1, t2, n1, n2, n4, n5, s3 = await self.submissions()
+            saved.write_text(json.dumps(dict(t1=t1, t2=t2, n1=n1, n2=n2, n4=n4, n5=n5, s3=s3)))
+        return await self.market(t1, t2, n1, n2, n4, n5, s3)
 
-        # 5. Agent 3's near-copy of a pending submission is rejected and slashed.
-        original = research("data availability", self.tag)
-        pending = await self.submit(one, original, topic)
-        await self.status(pending, REPORTED)
-        start_three = self.usdc(three)
-        copycat = await self.submit(three, original + " Minor edit.", topic)
-        record = await self.status(copycat, REPORTED)
-        assert record["pass"] is False, "verifier passed a near-copy"
-        await two.tool("lore_vote", sub_id=pending, approve=True)
-        await two.tool("lore_vote", sub_id=copycat, approve=False)
-        await one.tool("lore_vote", sub_id=copycat, approve=False)
-        await self.status(pending, ACCEPTED)
-        await self.status(copycat, REJECTED)
-        assert self.usdc(three) == start_three - stake, "rejected stake was not slashed"
+    async def submissions(self):
+        stake, fee = self.reader.call("Submissions", "stake"), self.reader.call("Submissions", "stakeFee")
 
-        # 6. Agent 3 buys and leaks; the lookup names Agent 3.
-        await three.tool("lore_buy", topic_id=topic, confirm=True)
-        leaked = three_sentences((await three.tool("lore_read_topic", topic_id=topic))["nodes"][0]["text"])
-        reports = self.reader.call("Reports", "nextReportId")
-        await one.tool("lore_report_leak", topic_id=topic, text=leaked)
-        match = await wait_for("leak match", lambda: (r := self.reader.record("Reports", "getReport", reports))["matched"] and r)
-        assert match["matchedWallet"].lower() == three.address.lower(), "leak matched the wrong wallet"
+        # 1. Ada opens topic 1; with no voters yet, the verifier's verdict decides.
+        s1 = await self.submit("ada", corpus.FINETUNE_ROOT)
+        rec = await self.status(s1, ACCEPTED, REJECTED)
+        assert rec["status"] == ACCEPTED, "the first research note was rejected"
+        n1 = rec["nodeId"]
+        t1 = self.topic_of(n1)
+        say(f"sub {s1} accepted: topic {t1}, node {n1}")
 
-        # 7. Every receipt passes; a false claim fails.
-        roots = set(task["receipts"])
-        public = await one.tool("lore_get_topic", topic_id=topic)
-        roots.update(n["meta"]["receipt"] for n in public["nodes"] if n.get("meta"))
-        assert roots, "no receipts were produced"
-        for root in sorted(roots):
-            checked = await one.tool("lore_check_proof", root=root)
-            assert checked["status"] == "pass", (root, checked)
-        false_claim = json.dumps({"title": "not what the model signed"})
-        assert (await one.tool("lore_check_proof", root=sorted(roots)[0], claimed_output_json=false_claim))["status"] == "fail"
+        # 2. Ben builds on it. Ada (topic 1's only person) must vote; the gateway finalizes early.
+        s2 = await self.submit("ben", corpus.FINETUNE_MIXING, t1)
+        await self.status(s2, REPORTED)
+        await self.vote("ada", s2, True)
+        rec = await self.status(s2, ACCEPTED, REJECTED)
+        assert rec["status"] == ACCEPTED, "Ben's follow-up was rejected"
+        n2 = rec["nodeId"]
+        assert n1 in self.reader.call("TopicGraph", "parentsOf", n2), "follow-up does not point at the root"
 
-        # 8. Final graph shape.
-        final = self.reader.call("TopicGraph", "topicNodes", topic)
-        assert len(final) == 3 and self.reader.call("Access", "hasAccess", topic, three.address)
-        assert price > 0
-        return {"passed": True, "run": self.tag, "topic": topic, "nodes": list(final), "receipts_checked": len(roots)}
+        # 3. Chen submits a near-copy of Ada's note: the verifier fails it and the topic's people vote it down.
+        chen0 = self.usdc(self.a["chen"])
+        s3 = await self.submit("chen", corpus.FINETUNE_COPYCAT, t1)
+        rec = await self.status(s3, REPORTED)
+        assert rec["pass"] is False, "verifier passed a near-copy"
+        await self.vote("ada", s3, False)
+        await self.vote("ben", s3, False)
+        await self.status(s3, REJECTED)
+        assert chen0 - self.usdc(self.a["chen"]) == stake, "a rejected stake must go entirely to the treasury"
+        say(f"sub {s3} rejected; Chen's {stake / 1e6:g} USDC stake went to the treasury")
+
+        # 4. Chen's genuine follow-up passes both people.
+        s4 = await self.submit("chen", corpus.FINETUNE_EVAL, t1)
+        await self.status(s4, REPORTED)
+        await self.vote("ada", s4, True)
+        await self.vote("ben", s4, True)
+        rec = await self.status(s4, ACCEPTED, REJECTED)
+        assert rec["status"] == ACCEPTED, "Chen's evaluation note was rejected"
+        n4 = rec["nodeId"]
+
+        # 5. Ben opens topic 2; Ada builds on it and Ben votes.
+        s5 = await self.submit("ben", corpus.RAG_ROOT)
+        rec = await self.status(s5, ACCEPTED, REJECTED)
+        assert rec["status"] == ACCEPTED, "RAG root was rejected"
+        n5 = rec["nodeId"]
+        t2 = self.topic_of(n5)
+        ada0 = self.usdc(self.a["ada"])
+        s6 = await self.submit("ada", corpus.RAG_RERANK, t2)
+        await self.status(s6, REPORTED)
+        await self.vote("ben", s6, True)
+        rec = await self.status(s6, ACCEPTED, REJECTED)
+        assert rec["status"] == ACCEPTED, "Ada's reranking note was rejected"
+        assert self.usdc(self.a["ada"]) - ada0 == -fee, "an accepted stake comes back minus the fee"
+        return t1, t2, n1, n2, n4, n5, s3
+
+    async def market(self, t1, t2, n1, n2, n4, n5, s3) -> dict:
+        r = self.results
+
+        # 6. The curator gives every node a public title and description, with a checkable proof.
+        meta = await self.node_meta(t1, n4)
+        check = await self.a["dana"].tool("lore_check_proof", root=meta["meta"]["receipt"])
+        assert check["status"] == "pass", f"curator proof did not pass: {check}"
+        say(f"node {n4} titled '{meta['meta']['title']}' — proof {check['status']} ({check.get('binding')})")
+
+        # 7. Dana buys topic 1 and reads a copy watermarked to her wallet.
+        topics = await self.a["dana"].tool("lore_list_topics")
+        assert any(t["topic_id"] == t1 for t in topics["topics"])
+        await self.a["dana"].act("lore_buy", topic_id=t1, confirm=True)
+        assert self.reader.call("Access", "hasAccess", t1, self.a["dana"].address)
+        read = await self.a["dana"].tool("lore_read_topic", topic_id=t1)
+        copies = [n["text"] for n in read["nodes"]]
+        assert len(copies) == 3 and all(FRAME in c for c in copies), "Dana's copy is not watermarked per node"
+
+        # 8. Dana's copy leaks; Ben reports it and the gateway traces it to Dana's wallet on-chain.
+        excerpt = three_sentences(copies[0])
+        before = self.reader.call("Reports", "nextReportId")
+        await self.a["ben"].act("lore_report_leak", topic_id=t1, text=excerpt)
+        rid = before
+        traced = await wait_for("leak trace", lambda: (rep := self.reader.record("Reports", "getReport", rid))["matched"] and rep)
+        assert traced["matchedWallet"].lower() == self.a["dana"].address.lower(), "leak traced to the wrong wallet"
+        say(f"leak report {rid} traced to Dana ({traced['scoreBps'] / 100:g}% of mark bits)")
+
+        # 9. Contributors claim royalties from Dana's purchase.
+        claim = await self.a["ada"].tool("lore_claimable")
+        before = self.usdc(self.a["ada"])
+        await self.a["ada"].act("lore_claim")
+        gained = self.usdc(self.a["ada"]) - before
+        assert gained > 0, f"Ada claimed nothing: {claim}"
+        say(f"Ada claimed {gained / 1e6:g} USDC in royalties")
+
+        r.update(topics=[t1, t2], nodes=[n1, n2, n4, n5], rejected=[s3], leak_report=rid, ada_royalty=gained)
+        return r
 
 
-async def main(check_only: bool) -> dict:
-    raise SystemExit("e2e/run.py is paused: it drove the local lore-mcp, which is replaced by the hosted MCP "
-                     "server. It needs the signing step before it can send transactions; see BUILD_PLAN workstream E.")
-    gateway = os.environ["LORE_GATEWAY_URL"]
+async def main_async(check_only: bool, resume: bool = False) -> None:
+    import httpx2
+    from mcp import ClientSession
+    from mcp.client.streamable_http import streamable_http_client
+
+    gateway = os.environ.get("LORE_GATEWAY_URL", "http://127.0.0.1:8080").rstrip("/")
+    reader = ChainReader(int(os.environ.get("LORE_CHAIN_ID", 16602)))
+    tag_env = os.environ.get("E2E_TAG")
+    tag = None if tag_env == "none" else (tag_env or secrets.token_hex(3))
+
+    from contextlib import AsyncExitStack
+
     async with AsyncExitStack() as stack:
+        agents = {}
+        for name in PEOPLE:
+            token = await asyncio.to_thread(login, gateway, name)
+            http = await stack.enter_async_context(httpx2.AsyncClient(headers={"Authorization": f"Bearer {token}"},
+                                                                     timeout=httpx2.Timeout(300)))
+            streams = await stack.enter_async_context(streamable_http_client(f"{gateway}/mcp", http_client=http))
+            session = await stack.enter_async_context(ClientSession(streams[0], streams[1]))
+            await session.initialize()
+            agents[name] = Agent(name, session, reader)
+        names = {t.name for t in (await agents["ada"].session.list_tools()).tools}
+        missing = TOOLS - names
+        assert not missing, f"hosted MCP is missing tools: {sorted(missing)}"
+        say(f"{len(agents)} agents logged in; {len(names)} MCP tools available")
         if check_only:
-            agent = await start(stack, "check", "0x" + secrets.token_hex(32), gateway)
-            tools = {tool.name for tool in (await agent.session.list_tools()).tools}
-            return {"tools_ok": TOOLS <= tools, "missing": sorted(TOOLS - tools)}
-        keys = [os.environ[f"E2E_AGENT{i}_KEY"] for i in (1, 2, 3)]
-        agents = [await start(stack, f"agent{i}", key, gateway) for i, key in enumerate(keys, 1)]
-        chain_id = int(os.environ.get("LORE_CHAIN_ID", 16602))
-        return await Scenario(ChainReader(chain_id, rpc_url=os.environ.get("LORE_RPC")), agents).run()
+            return
+        for agent in agents.values():
+            await agent.create_wallet()  # the same wallet again on a rerun: one per person
+        say("Turnkey wallets created and linked to their people on-chain (PersonRegistry)")
+        say("funding test agents (gas + MockUSDC, testnet only)")
+        await asyncio.to_thread(fund, reader, [a.address for a in agents.values()], 60_000000)
+        result = await Scenario(reader, agents, tag).run(resume)
+        say("END-TO-END PASSED: " + json.dumps(result))
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--check", action="store_true", help="log in and compare the tool list only")
+    parser.add_argument("--resume", action="store_true",
+                        help="skip the submission phase if it already completed on this deployment")
+    args = parser.parse_args()
+    asyncio.run(main_async(args.check, args.resume))
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--check", action="store_true")
-    report = asyncio.run(main(parser.parse_args().check))
-    print(json.dumps(report, indent=2))
-    raise SystemExit(0 if report.get("passed") or report.get("tools_ok") else 2)
+    main()

@@ -6,14 +6,14 @@ from pathlib import Path
 
 from lore_shared.chain import ChainReader
 
-# The gateway also links wallets to World ID persons in PersonRegistry (REGISTRAR).
-ROLES = {"gateway": ["LEAK_DETECTOR_ROLE", "REGISTRAR_ROLE"], "verifier": ["VERIFIER_ROLE"], "curator": ["CURATOR_ROLE"]}
+# The gateway holds two roles: it records leak matches and links wallets to people (PersonRegistry).
+ROLES = {"gateway": ("LEAK_DETECTOR_ROLE", "REGISTRAR_ROLE"), "verifier": ("VERIFIER_ROLE",), "curator": ("CURATOR_ROLE",)}
 
 
 def check(reader, addresses: dict) -> dict:
     roles = {
-        f"{name} {role}": reader.call("LoreRoles", "hasRole", reader.call("LoreRoles", role), addresses[name])
-        for name, needed in ROLES.items() for role in needed
+        name: all(reader.call("LoreRoles", "hasRole", reader.call("LoreRoles", role), addresses[name]) for role in needed)
+        for name, needed in ROLES.items()
     }
     funded = {name: reader.web3.eth.get_balance(address) > 0 for name, address in addresses.items()}
     return {"roles": roles, "funded": funded, "ready": all(roles.values()) and all(funded.values())}

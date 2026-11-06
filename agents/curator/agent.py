@@ -66,21 +66,28 @@ class Memory:
 
 
 def _write(llm, version: str, payload: dict, upload_json) -> tuple[dict, str]:
-    """One model call that must return a valid {title, description}. Retries once on bad output."""
+    """One model call that must return a valid {title, description}. Up to three tries, each told what was wrong."""
     title = desc = ""
-    for _ in range(2):
-        out, receipt = llm([
-            {"role": "system", "content": PROMPTS[version]},
-            {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-        ], version)
+    messages = [
+        {"role": "system", "content": PROMPTS[version]},
+        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+    ]
+    for _ in range(3):
+        out, receipt = llm(messages, version)
         try:
             m = zg.json_out(out)
             # Not stripped: what we publish must equal the signed output byte for byte, so proofs match.
             title, desc = str(m.get("title", "")), str(m.get("description", ""))
         except (ValueError, AttributeError):
+            messages = messages[:2] + [{"role": "assistant", "content": out}, {
+                "role": "user", "content": "That was not valid JSON. Reply with only the JSON object {title, description}."}]
             continue
         if 0 < len(title) <= 80 and 300 <= len(desc) <= 600:
             return {"title": title, "description": desc}, upload_json(receipt)
+        messages = messages[:2] + [{"role": "assistant", "content": out}, {
+            "role": "user", "content": f"Your title has {len(title)} characters (must be 1-80) and your description has "
+                                       f"{len(desc)} characters (must be 300-600). Rewrite both within those limits. "
+                                       "Reply with only the JSON object."}]
     raise BadMeta(f"{version}: title {len(title)} chars, description {len(desc)} chars")
 
 
