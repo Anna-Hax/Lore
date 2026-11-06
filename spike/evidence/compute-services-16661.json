@@ -1,0 +1,117 @@
+{
+  "chain_id": 16661,
+  "contract": "0x47340d900bdFec2BD393c626E12ea0656F938d84",
+  "service_count": 10,
+  "services": [
+    {
+      "provider": "0x25F8f01cA76060ea40895472b1b79f76613Ca497",
+      "model": "openai/gpt-5.4-mini",
+      "type": "chatbot",
+      "url": "https://5259ae0f38365b27c0bab6301b73691206e32dce-80.dstack-pha-prod5.phala.network",
+      "verifiability": "TeeML",
+      "tee_signer": "0x841e738c6D34897FC7F176d3c513151496BFf22d",
+      "signer_acknowledged": false,
+      "target_separated": null,
+      "expected_signer": "0x841e738c6D34897FC7F176d3c513151496BFf22d"
+    },
+    {
+      "provider": "0xf4FB8d2bD856e672b5f9848b0eD235A20079B250",
+      "model": "0GM-1.0-35B-A3B",
+      "type": "chatbot",
+      "url": "https://compute-network-20.integratenetwork.work",
+      "verifiability": "TeeML",
+      "tee_signer": "0x6C94321bB38e764ed266Db6e3eEe7503f754A23a",
+      "signer_acknowledged": true,
+      "target_separated": null,
+      "expected_signer": "0x6C94321bB38e764ed266Db6e3eEe7503f754A23a"
+    },
+    {
+      "provider": "0x6f3a17d79BCBb20974903a576E8fC81fD9d1ecd1",
+      "model": "qwen3.7-text-embedding",
+      "type": "embedding",
+      "url": "https://compute-network-35.integratenetwork.work",
+      "verifiability": "TeeML",
+      "tee_signer": "0x2E228d58ff66c9c04a216B7a9b3AACb2eE8c2A86",
+      "signer_acknowledged": true,
+      "target_separated": null,
+      "expected_signer": "0x2E228d58ff66c9c04a216B7a9b3AACb2eE8c2A86"
+    },
+    {
+      "provider": "0x158468A43ae7FEfDB53aDF0d6081d1959AaB1333",
+      "model": "qwen3-embedding-8b",
+      "type": "embedding",
+      "url": "https://compute-network-39.integratenetwork.work",
+      "verifiability": "TeeML",
+      "tee_signer": "0xa60e99846e1A24065D505A3c0f073f28CF34726e",
+      "signer_acknowledged": true,
+      "target_separated": null,
+      "expected_signer": "0xa60e99846e1A24065D505A3c0f073f28CF34726e"
+    },
+    {
+      "provider": "0xE6c9957c95C4c5cB5514Fd7717C2f5985540C72D",
+      "model": "vllm-sr/Vela-2.0-9B",
+      "type": "decisions",
+      "url": "https://compute-network-43.integratenetwork.work",
+      "verifiability": "TeeML",
+      "tee_signer": "0xa60e99846e1A24065D505A3c0f073f28CF34726e",
+      "signer_acknowledged": true,
+      "target_separated": null,
+      "expected_signer": "0xa60e99846e1A24065D505A3c0f073f28CF34726e"
+    },
+    {
+      "provider": "0x787A66B5dB48F23494aA7384f51EDfEF1911341D",
+      "model": "convaiinnovations/laya",
+      "type": "decisions",
+      "url": "https://compute-network-40.integratenetwork.work",
+      "verifiability": "TeeML",
+      "tee_signer": "0xa60e99846e1A24065D505A3c0f073f28CF34726e",
+      "signer_acknowledged": true,
+      "target_separated": null,
+      "expected_signer": "0xa60e99846e1A24065D505A3c0f073f28CF34726e"
+    },
+    {
+      "provider": "0xE63C4F83abFbDFCaB884247EaC21f59e2e8d502e",
+      "model": "openai/whisper-large-v3",
+      "type": "speech-to-text",
+      "url": "https://compute-network-16.integratenetwork.work",
+      "verifiability": "TeeML",
+      "tee_signer": "0x030718f84464Bdd3e00d6D0a0c68Ca18dC1C45Be",
+      "signer_acknowledged": true,
+      "target_separated": null,
+      "expected_signer": "0x030718f84464Bdd3e00d6D0a0c68Ca18dC1C45Be"
+    },
+    {
+      "provider": "0x59E598DB6E8c63D7fEeB64a69De36510a221C762",
+      "model": "z-image-turbo",
+      "type": "text-to-image",
+      "url": "https://compute-network-15.integratenetwork.work",
+      "verifiability": "TeeML",
+      "tee_signer": "0xC176076F6051c16C5F30D818EBAAF4Eb61558943",
+      "signer_acknowledged": true,
+      "target_separated": null,
+      "expected_signer": "0xC176076F6051c16C5F30D818EBAAF4Eb61558943"
+    },
+    {
+      "provider": "0xD179F4526064846dE9a9E9D93683AF75CB72E503",
+      "model": "glm-5.3",
+      "type": "chatbot",
+      "url": "https://compute-network-19.integratenetwork.work",
+      "verifiability": "TeeML",
+      "tee_signer": "0x0766BC72beB6dAe764eE51C781c0A68117E69179",
+      "signer_acknowledged": true,
+      "target_separated": null,
+      "expected_signer": "0x0766BC72beB6dAe764eE51C781c0A68117E69179"
+    },
+    {
+      "provider": "0x15aDd680050Ecd0B25eb7d480e7BB1f48594Eabe",
+      "model": "0GM-1.0-35B-A3B-SIA",
+      "type": "chatbot",
+      "url": "https://compute-network-29.integratenetwork.work",
+      "verifiability": "TeeML",
+      "tee_signer": "0xbDb8daCECec80319128C1E52A15053f04C6F8CE7",
+      "signer_acknowledged": true,
+      "target_separated": null,
+      "expected_signer": "0xbDb8daCECec80319128C1E52A15053f04C6F8CE7"
+    }
+  ]
+}
