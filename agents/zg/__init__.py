@@ -84,7 +84,7 @@ def call(
     signature check, so Lore never pays twice for one request. Failures before payment raise ZGUnavailable
     (free to retry); every failure after payment is a plain ZGError.
     """
-    http = http or httpx.Client(timeout=120)
+    http = http or httpx.Client(timeout=httpx.Timeout(300, connect=20))  # reasoning models can think for minutes
     body = {"model": model, "messages": messages, "temperature": 0, "verify_tee": True}
     request_hash = _hash(body)
     paid = cache.get(request_hash) if cache else None
@@ -175,7 +175,7 @@ def embed(
     Same rules as call(): private mode, and the provider's TEE signature over the (end-to-end encrypted) exchange
     must come from the signer in its on-chain Service record. The vector itself is not bound by that signature.
     """
-    http = http or httpx.Client(timeout=120)
+    http = http or httpx.Client(timeout=httpx.Timeout(300, connect=20))  # reasoning models can think for minutes
     headers = {"Authorization": f"Bearer {api_key}", **PRIVATE_HEADERS}
     body = {"model": model, "input": [text], "verify_tee": True}
     for attempt in range(retries):
