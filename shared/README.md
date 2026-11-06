@@ -3,6 +3,12 @@
 P3's Python 3.12 package for P1's hosted gateway, which is also the MCP server users connect to.
 Users' agents never receive `MASTER_KEY` or `WM_SECRET`.
 
+The [dynamic pricing implementation and handoff](PRICING.md) covers the new
+integer price model, quality weights, voter rewards and corrected royalty
+accounting. It includes an executable offline scenario and integration vectors.
+Current contracts still charge the fixed price; the new model is explicitly
+opt-in until P1/P2 integrate and deploy it.
+
 From the repository root, with `uv` installed:
 
 ```sh
