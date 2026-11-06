@@ -1,0 +1,367 @@
+{
+ "generated_at": 1793984604,
+ "chain": {
+  "chain_id": 16602,
+  "name": "0G Galileo Testnet",
+  "explorer": "https://chainscan-galileo.0g.ai",
+  "contracts": {
+   "Access": "0x7acad9f09d1608a77ce660a477A8e445bDba4cB5",
+   "LoreRoles": "0xe833F47cE8a12b6d548613651aDf96928F5dD197",
+   "PersonRegistry": "0x3299F44EE855462e7ff486CAB3CD360441EbE80a",
+   "Reports": "0x0B84248f82ccd8a5020E594Ef3d9b9D1B7C59b92",
+   "Royalties": "0x05c61CFdE0820F2ddcBAB6BA217422b7a609c134",
+   "Submissions": "0x826972CB252f7b7e8657FB4AC1CBBd93A0A9d92b",
+   "TopicGraph": "0xE4Fb783bD33219E9aa1EE0810fA8D6e7D4514ad2",
+   "USDC": "0x313Bbd872116452718BAF843962B2ec180148f67"
+  }
+ },
+ "params": {
+  "stake": 10000000,
+  "stake_fee": 500000,
+  "topic_price": 5000000,
+  "platform_cut_bps": 1000,
+  "quorum_bps": 5000,
+  "voting_window": 86400
+ },
+ "mcp_url": "http://127.0.0.1:8080/mcp",
+ "stats": {
+  "topics": 2,
+  "nodes": 5,
+  "submissions": 6,
+  "accepted": 5,
+  "rejected": 1,
+  "in_review": 0,
+  "people": 4,
+  "purchases": 0,
+  "volume_usdc": 0,
+  "royalties_usdc": 0,
+  "leak_reports": 0,
+  "leaks_traced": 0
+ },
+ "topics": [
+  {
+   "topic_id": 1,
+   "title": "LoRA Fine-Tuning Small Models for Invoice JSON Extraction",
+   "description": "An empirical study of LoRA fine-tuning open 1B-3B models to extract invoice fields as JSON. One node sweeps the adapter-side levers: rank and hyperparameters, layers to adapt, synthetic versus real data, and sequence packing, scored by exact-match F1 on real documents. A second holds the adapter fixed and varies the training recipe\u00e2\u20ac\u201dlearning-rate schedule, warmup, mixing in general instruction data, curriculum ordering, embedding freezing\u00e2\u20ac\u201djudged on extraction accuracy and retention of general ability. Together they cover the full tuning pipeline for budget-friendly structured extraction.",
+   "node_count": 3,
+   "buyers": 0,
+   "contributors": 3,
+   "proof": {
+    "status": "pass",
+    "model": "glm-5.3",
+    "provider": "0xD179F4526064846dE9a9E9D93683AF75CB72E503",
+    "signer": "0x0766BC72beB6dAe764eE51C781c0A68117E69179",
+    "binding": "e2ee-ciphertext",
+    "private": true,
+    "root": "0x675b160c902b4413a407f4bd352943479edf43d8c6e98f7d715aa733be8c4f9d"
+   }
+  },
+  {
+   "topic_id": 2,
+   "title": "Chunk Size and Chunking Strategies for RAG QA over Internal Documentation",
+   "description": "This topic examines how chunking decisions shape retrieval-augmented question answering over a large internal engineering wiki. It centers on a hands-on sweep of fixed chunk sizes with token overlap, scored by answer correctness against a benchmark of human-written questions, and extends to three popular alternatives: semantic chunking via embedding breakpoints, sentence-window retrieval, and prepending page titles to chunks. Together they frame the trade-off between context sufficiency and retrieval precision, and where tuning effort is best spent.",
+   "node_count": 2,
+   "buyers": 0,
+   "contributors": 2,
+   "proof": {
+    "status": "pass",
+    "model": "glm-5.3",
+    "provider": "0xD179F4526064846dE9a9E9D93683AF75CB72E503",
+    "signer": "0x0766BC72beB6dAe764eE51C781c0A68117E69179",
+    "binding": "e2ee-ciphertext",
+    "private": true,
+    "root": "0xc5c4df2c07309f032c103aecf161b6ee2e29d2184b92f0c2b929a8c4a79b77cf"
+   }
+  }
+ ],
+ "nodes": [
+  {
+   "node_id": 1,
+   "topic_id": 1,
+   "contributor": "0xa9f589e4c15985d751068f65f49801e78b178cf6",
+   "title": "Dead Ends in LoRA Fine-Tuning 1B-3B Models for Invoice JSON Extraction",
+   "description": "An empirical study of LoRA fine-tuning three open 1B-3B parameter base models to extract invoice fields into JSON. It sweeps adapter rank and related hyperparameters, tests which layers to adapt, compares synthetic versus real training data, and examines sequence packing, with exact-match F1 as the evaluation metric. Readers learn which common configurations waste compute or quietly hurt accuracy on real documents, and get a distilled, budget-friendly setup for structured extraction with small models.",
+   "parents": [],
+   "proof": {
+    "status": "pass",
+    "model": "glm-5.3",
+    "provider": "0xD179F4526064846dE9a9E9D93683AF75CB72E503",
+    "signer": "0x0766BC72beB6dAe764eE51C781c0A68117E69179",
+    "binding": "e2ee-ciphertext",
+    "private": true,
+    "root": "0x5450261fc843d0e974b6e7fa08d2b5e277f5677c749e74099cf9216dc580e3bd"
+   }
+  },
+  {
+   "node_id": 2,
+   "topic_id": 1,
+   "contributor": "0x90d828e09dfd698f0b0c575845c5771246f6544e",
+   "title": "Schedules, Warmup, and Data Mixing in LoRA Fine-Tuning for Invoice Extraction",
+   "description": "With the LoRA adapter for invoice JSON extraction held fixed, this study tests the training levers recipes often disagree on: cosine versus constant learning rates, warmup length, mixing general instruction data into batches, curriculum ordering of documents, and freezing the embedding layer. Small open models are scored on exact-match extraction F1 over real invoices plus a general instruction-following check to measure forgetting. Readers learn which choices matter, which are dead ends, and how to balance extraction accuracy against general ability.",
+   "parents": [
+    1
+   ],
+   "proof": {
+    "status": "pass",
+    "model": "glm-5.3",
+    "provider": "0xD179F4526064846dE9a9E9D93683AF75CB72E503",
+    "signer": "0x0766BC72beB6dAe764eE51C781c0A68117E69179",
+    "binding": "e2ee-ciphertext",
+    "private": true,
+    "root": "0xf1c91ee0abd9d29e1052a781ec9d0e41a6b1c1a8ed2056075c17e8e447663706"
+   }
+  },
+  {
+   "node_id": 3,
+   "topic_id": 1,
+   "contributor": "0x36f95751703e1b1b5011e654b2a4d8de48173f78",
+   "title": null,
+   "description": null,
+   "parents": [],
+   "proof": null
+  },
+  {
+   "node_id": 4,
+   "topic_id": 2,
+   "contributor": "0x90d828e09dfd698f0b0c575845c5771246f6544e",
+   "title": "Chunk Size and Chunking Strategy for RAG QA over Internal Documentation",
+   "description": "A hands-on evaluation of how chunking choices affect retrieval-augmented QA over a large internal engineering wiki. The author sweeps a range of fixed chunk sizes with token overlap, scoring answer correctness against hundreds of human-written questions, then tests three popular alternatives: semantic chunking via embedding breakpoints, sentence-window retrieval, and prepending page titles to chunks. Readers learn how chunk size trades context against retrieval precision, how each alternative performed relative to fixed chunking, and where tuning effort is best focused.",
+   "parents": [],
+   "proof": {
+    "status": "pass",
+    "model": "glm-5.3",
+    "provider": "0xD179F4526064846dE9a9E9D93683AF75CB72E503",
+    "signer": "0x0766BC72beB6dAe764eE51C781c0A68117E69179",
+    "binding": "e2ee-ciphertext",
+    "private": true,
+    "root": "0x0d4c2dfed15f3a1cef2bb52c2ac92e40b175d9200e92570dea27183ed2ec9b22"
+   }
+  },
+  {
+   "node_id": 5,
+   "topic_id": 2,
+   "contributor": "0xa9f589e4c15985d751068f65f49801e78b178cf6",
+   "title": null,
+   "description": null,
+   "parents": [
+    4
+   ],
+   "proof": null
+  }
+ ],
+ "submissions": [
+  {
+   "sub_id": 1,
+   "topic_id": 0,
+   "submitter": "0xa9f589e4c15985d751068f65f49801e78b178cf6",
+   "status": "Accepted",
+   "verifier_pass": true,
+   "yes": 0,
+   "no": 0,
+   "eligible": 0,
+   "node_id": 1,
+   "parents": [],
+   "submitted_at": 1793980277,
+   "reported_at": 1793980378,
+   "report": {
+    "pass": true,
+    "checks": {
+     "fits_topic": true,
+     "ingested_by_gateway": true,
+     "length": true,
+     "original_vs_graph": true,
+     "original_vs_pending": true,
+     "original_vs_public": true,
+     "relevant": true
+    },
+    "max_similarity": 0.0,
+    "proof": {
+     "status": "pass",
+     "model": "glm-5.3",
+     "provider": "0xD179F4526064846dE9a9E9D93683AF75CB72E503",
+     "signer": "0x0766BC72beB6dAe764eE51C781c0A68117E69179",
+     "binding": "e2ee-ciphertext",
+     "private": true,
+     "root": "0xaf902ca533bb2fffd1b189d30cd49dac60a7ac248da77450b83cadf76eb235ca"
+    }
+   }
+  },
+  {
+   "sub_id": 2,
+   "topic_id": 1,
+   "submitter": "0x90d828e09dfd698f0b0c575845c5771246f6544e",
+   "status": "Accepted",
+   "verifier_pass": true,
+   "yes": 1,
+   "no": 0,
+   "eligible": 1,
+   "node_id": 2,
+   "parents": [
+    1
+   ],
+   "submitted_at": 1793980419,
+   "reported_at": 1793980487,
+   "report": {
+    "pass": true,
+    "checks": {
+     "fits_topic": true,
+     "ingested_by_gateway": true,
+     "length": true,
+     "original_vs_graph": true,
+     "original_vs_pending": true,
+     "original_vs_public": true,
+     "relevant": true
+    },
+    "max_similarity": 0.7283,
+    "proof": {
+     "status": "pass",
+     "model": "glm-5.3",
+     "provider": "0xD179F4526064846dE9a9E9D93683AF75CB72E503",
+     "signer": "0x0766BC72beB6dAe764eE51C781c0A68117E69179",
+     "binding": "e2ee-ciphertext",
+     "private": true,
+     "root": "0x8e4e863323dbe28b977b94f8dfbb3bc814484dd8fc5e339fee6d4a0ec037c5fc"
+    }
+   }
+  },
+  {
+   "sub_id": 3,
+   "topic_id": 1,
+   "submitter": "0x36f95751703e1b1b5011e654b2a4d8de48173f78",
+   "status": "Rejected",
+   "verifier_pass": false,
+   "yes": 0,
+   "no": 2,
+   "eligible": 2,
+   "node_id": null,
+   "parents": [],
+   "submitted_at": 1793980553,
+   "reported_at": 1793980595,
+   "report": {
+    "pass": false,
+    "checks": {
+     "fits_topic": false,
+     "ingested_by_gateway": true,
+     "length": true,
+     "original_vs_graph": false,
+     "original_vs_pending": true,
+     "original_vs_public": false,
+     "relevant": false
+    },
+    "max_similarity": 0.9987,
+    "proof": null
+   }
+  },
+  {
+   "sub_id": 4,
+   "topic_id": 1,
+   "submitter": "0x36f95751703e1b1b5011e654b2a4d8de48173f78",
+   "status": "Accepted",
+   "verifier_pass": true,
+   "yes": 2,
+   "no": 0,
+   "eligible": 2,
+   "node_id": 3,
+   "parents": [],
+   "submitted_at": 1793980678,
+   "reported_at": 1793981001,
+   "report": {
+    "pass": true,
+    "checks": {
+     "fits_topic": true,
+     "ingested_by_gateway": true,
+     "length": true,
+     "original_vs_graph": true,
+     "original_vs_pending": true,
+     "original_vs_public": true,
+     "relevant": true
+    },
+    "max_similarity": 0.5805,
+    "proof": {
+     "status": "pass",
+     "model": "glm-5.3",
+     "provider": "0xD179F4526064846dE9a9E9D93683AF75CB72E503",
+     "signer": "0x0766BC72beB6dAe764eE51C781c0A68117E69179",
+     "binding": "e2ee-ciphertext",
+     "private": true,
+     "root": "0x2dce2e1985ffc391816a251ef52a358883f92e03e4d4b32203950eeee5b41849"
+    }
+   }
+  },
+  {
+   "sub_id": 5,
+   "topic_id": 0,
+   "submitter": "0x90d828e09dfd698f0b0c575845c5771246f6544e",
+   "status": "Accepted",
+   "verifier_pass": true,
+   "yes": 0,
+   "no": 0,
+   "eligible": 0,
+   "node_id": 4,
+   "parents": [],
+   "submitted_at": 1793981121,
+   "reported_at": 1793981181,
+   "report": {
+    "pass": true,
+    "checks": {
+     "fits_topic": true,
+     "ingested_by_gateway": true,
+     "length": true,
+     "original_vs_graph": true,
+     "original_vs_pending": true,
+     "original_vs_public": true,
+     "relevant": true
+    },
+    "max_similarity": 0.0,
+    "proof": {
+     "status": "pass",
+     "model": "glm-5.3",
+     "provider": "0xD179F4526064846dE9a9E9D93683AF75CB72E503",
+     "signer": "0x0766BC72beB6dAe764eE51C781c0A68117E69179",
+     "binding": "e2ee-ciphertext",
+     "private": true,
+     "root": "0xa4b1c9c1ff8b749a8bb9f9d96d00ba675ace48354ad48d1d8b1799eadafaf76b"
+    }
+   }
+  },
+  {
+   "sub_id": 6,
+   "topic_id": 2,
+   "submitter": "0xa9f589e4c15985d751068f65f49801e78b178cf6",
+   "status": "Accepted",
+   "verifier_pass": true,
+   "yes": 1,
+   "no": 0,
+   "eligible": 1,
+   "node_id": 5,
+   "parents": [
+    4
+   ],
+   "submitted_at": 1793981249,
+   "reported_at": 1793981308,
+   "report": {
+    "pass": true,
+    "checks": {
+     "fits_topic": true,
+     "ingested_by_gateway": true,
+     "length": true,
+     "original_vs_graph": true,
+     "original_vs_pending": true,
+     "original_vs_public": true,
+     "relevant": true
+    },
+    "max_similarity": 0.7063,
+    "proof": {
+     "status": "pass",
+     "model": "glm-5.3",
+     "provider": "0xD179F4526064846dE9a9E9D93683AF75CB72E503",
+     "signer": "0x0766BC72beB6dAe764eE51C781c0A68117E69179",
+     "binding": "e2ee-ciphertext",
+     "private": true,
+     "root": "0xbd683b95ddb8a8474755f5820a212053688ff2daf3833e6e2f5e7b57e0c54c93"
+    }
+   }
+  }
+ ],
+ "reports": []
+}

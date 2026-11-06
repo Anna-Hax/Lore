@@ -33,6 +33,7 @@ function polyToD(poly,toXY){
 
 /* ============ build one maze face ============ */
 const SVGNS='http://www.w3.org/2000/svg';
+const REDUCED=window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 function buildFace(seed,faceClass){
   const SIZE=600,N=13,PAD=10;
   const rng=mulberry32(seed);
@@ -88,7 +89,7 @@ function buildFace(seed,faceClass){
     path.setAttribute('stroke-dashoffset',rrng()*(dash+gap));
     const speed=55+rrng()*65;                          // px per second
     const dir=rrng()<.5?1:-1;
-    path.animate(
+    if(!REDUCED) path.animate(
       [{strokeDashoffset:path.getAttribute('stroke-dashoffset')},
        {strokeDashoffset:(+path.getAttribute('stroke-dashoffset'))-dir*(dash+gap)}],
       {duration:((dash+gap)/speed)*1000,iterations:Infinity,easing:'linear'}
@@ -164,7 +165,7 @@ seedStars();addEventListener('resize',seedStars);
     cx.fillStyle=s.red?`rgba(255,80,60,${a})`:`rgba(255,240,235,${a*.9})`;
     cx.fill();
   }
-  requestAnimationFrame(twinkle);
+  if(!REDUCED) requestAnimationFrame(twinkle);
 })(0);
 
 /* ============ mouse parallax ============ */
@@ -179,5 +180,5 @@ addEventListener('pointermove',e=>{
   cxv+=(tx-cxv)*.04;cyv+=(ty-cyv)*.04;
   tilt.style.transform=`rotateX(${-32-cyv*8}deg) rotateY(${-45+cxv*10}deg)`;
   outer.style.translate=`${(cxv*-18).toFixed(1)}px ${(cyv*-10).toFixed(1)}px`;
-  requestAnimationFrame(lerp);
+  if(!REDUCED) requestAnimationFrame(lerp);
 })();

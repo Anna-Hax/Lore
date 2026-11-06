@@ -111,6 +111,17 @@ h1 .o{
 }
 .btn-hero:hover{transform:translateY(-2px) scale(1.02);box-shadow:0 14px 60px rgba(255,46,31,.55), inset 0 1px 0 rgba(255,255,255,.35)}
 .btn-hero .arr{transition:transform .25s}
+.btn-ghost{
+  display:inline-flex;align-items:center;margin-left:10px;
+  font-family:var(--display);font-weight:700;font-size:14px;letter-spacing:.05em;text-transform:uppercase;
+  color:var(--ink);text-decoration:none;padding:14px 24px;border-radius:999px;
+  border:1px solid rgba(255,255,255,.22);background:rgba(255,255,255,.04);
+  transition:border-color .2s,background .2s;
+}
+.btn-ghost:hover{border-color:var(--red);background:rgba(255,46,31,.08)}
+.card-link{display:inline-block;margin-top:18px;font-family:var(--mono);font-size:12px;letter-spacing:.08em;color:var(--red);text-decoration:none}
+.card-link:hover{text-decoration:underline}
+a:focus-visible{outline:2px solid #fff;outline-offset:3px;border-radius:6px}
 .btn-hero:hover .arr{transform:translate(3px,-3px)}
 
 .hero-copy{
@@ -271,6 +282,8 @@ footer nav{gap:22px}
   .cube-outer{margin:6vh auto 8vh}
   h1{font-size:clamp(26px,9vw,40px)}
   .cta-pill{padding:8px 14px;font-size:12px}
+  .btn-ghost{margin:10px 0 0;padding:12px 20px}
+  .hero{overflow:hidden;overflow:clip}
   header{padding:14px 20px}
   :root{--cs:62vmin}
 }
