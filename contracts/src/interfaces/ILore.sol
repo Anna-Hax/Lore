@@ -31,6 +31,8 @@ interface ITopicGraph {
     function nodeCount(uint256 topicId) external view returns (uint256);
     function contributorSince(uint256 topicId, address a) external view returns (uint64); // 0 = not a contributor
     function contributorCount(uint256 topicId) external view returns (uint256);
+    function personSince(uint256 topicId, bytes32 person) external view returns (uint64); // 0 = not a contributor
+    function personCount(uint256 topicId) external view returns (uint256); // distinct people; the voter base
     function parentsOf(uint256 nodeId) external view returns (uint256[] memory);
 }
 
@@ -46,7 +48,7 @@ interface ISubmissions {
         uint256 indexed subId, uint256 indexed topicId, address indexed submitter, bytes32 contentHash, bytes32 storageRoot
     );
     event Reported(uint256 indexed subId, bool pass, uint256[] parents, bytes32 reportHash, uint256 eligibleVoters);
-    event Voted(uint256 indexed subId, address indexed voter, bool approve);
+    event Voted(uint256 indexed subId, address indexed voter, bytes32 indexed person, bool approve); // one vote per person
     event Finalized(uint256 indexed subId, bool accepted, uint256 nodeId);
 
     function submit(uint256 topicId, bytes32 contentHash, bytes32 storageRoot) external returns (uint256 subId); // pulls STAKE; topicId 0 = new topic

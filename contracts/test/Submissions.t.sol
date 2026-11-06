@@ -11,6 +11,12 @@ contract SubmissionsTest is Base {
     address alice = makeAddr("alice");
     address bob = makeAddr("bob");
 
+    function setUp() public override {
+        super.setUp();
+        _ensurePerson(alice); // World ID: needed to submit, and to vote
+        _ensurePerson(bob);
+    }
+
     // ---------- submit ----------
 
     function test_submit_pullsStake() public {
@@ -331,15 +337,15 @@ contract SubmissionsTest is Base {
         (, address[] memory c, uint256 subId) = _openVote();
         assertTrue(subs.canVote(subId, c[1]));
         vm.expectEmit(address(subs));
-        emit ISubmissions.Voted(subId, c[1], false);
+        emit ISubmissions.Voted(subId, c[1], _personId(c[1]), false);
         _vote(c[1], subId, false);
-        assertEq(subs.voteOf(subId, c[1]), 2);
+        assertEq(subs.voteOf(subId, _personId(c[1])), 2);
         assertEq(subs.getSubmission(subId).no, 1);
     }
 
     // ---------- slash ----------
 
-    function test_slash_splitAndClaim() public {
+    function test_reject_sendsWholeStakeToTreasury_votersGetNothing() public {
         (uint256 topicId, address[] memory c) = _topicWith(4); // threshold 2
         uint256 subId = _submit(alice, topicId);
         _report(subId, true);
@@ -348,56 +354,31 @@ contract SubmissionsTest is Base {
         _vote(c[2], subId, false); // early: no = 3 > 2
         _vote(c[3], subId, true);
         uint256 treasuryBefore = usdc.balanceOf(treasury);
+        uint256[] memory votersBefore = new uint256[](4);
+        for (uint256 i; i < 4; ++i) votersBefore[i] = usdc.balanceOf(c[i]);
+
         subs.finalize(subId);
 
-        uint256 toVoters = STAKE * 5000 / 10_000; // 5 USDC
-        uint256 per = toVoters / 3; // 1_666_666
-        assertEq(subs.getSubmission(subId).slashPerVoter, per);
-        assertEq(usdc.balanceOf(treasury) - treasuryBefore, STAKE - per * 3);
-
-        for (uint256 i; i < 3; ++i) {
-            uint256 before = usdc.balanceOf(c[i]);
-            vm.prank(c[i]);
-            subs.claimSlash(subId);
-            assertEq(usdc.balanceOf(c[i]) - before, per);
-        }
+        assertEq(uint256(subs.getSubmission(subId).status), uint256(ISubmissions.Status.Rejected));
+        assertEq(usdc.balanceOf(treasury) - treasuryBefore, STAKE);
+        for (uint256 i; i < 4; ++i) assertEq(usdc.balanceOf(c[i]), votersBefore[i]);
         assertEq(usdc.balanceOf(address(subs)), 0);
-
-        vm.prank(c[0]); // twice
-        vm.expectRevert(Submissions.NothingToClaim.selector);
-        subs.claimSlash(subId);
-        vm.prank(c[3]); // losing side
-        vm.expectRevert(Submissions.NothingToClaim.selector);
-        subs.claimSlash(subId);
     }
 
-    function test_slash_noWinningVoters_allToTreasury() public {
-        (uint256 topicId, address[] memory c) = _topicWith(4);
-        uint256 subId = _submit(alice, topicId);
+    function test_reject_byVerifierWithoutVotes_sendsWholeStakeToTreasury() public {
+        uint256 subId = _submit(alice, 0); // new topic: verifier decides alone
         _report(subId, false);
-        _vote(c[0], subId, true); // no quorum, verifier rejects, only voter was on the losing side
-        vm.warp(block.timestamp + WINDOW);
         uint256 before = usdc.balanceOf(treasury);
         subs.finalize(subId);
         assertEq(usdc.balanceOf(treasury) - before, STAKE);
-        vm.prank(c[0]);
-        vm.expectRevert(Submissions.NothingToClaim.selector);
-        subs.claimSlash(subId);
-    }
-
-    function test_claimSlash_onAcceptedReverts() public {
-        uint256 subId = _submit(alice, 0);
-        _report(subId, true);
-        subs.finalize(subId);
-        vm.expectRevert(abi.encodeWithSelector(Submissions.WrongStatus.selector, ISubmissions.Status.Accepted));
-        subs.claimSlash(subId);
+        assertEq(usdc.balanceOf(address(subs)), 0);
     }
 
     // ---------- params ----------
 
     function test_setParams_stakeSnapshotPerSubmission() public {
         uint256 subId = _submit(alice, 0);
-        subs.setParams(20e6, 1e6, 5000, 1 hours, 6000);
+        subs.setParams(20e6, 1e6, 1 hours, 6000);
         _report(subId, true);
         uint256 before = usdc.balanceOf(alice);
         subs.finalize(subId);
@@ -406,11 +387,11 @@ contract SubmissionsTest is Base {
 
     function test_setParams_guards() public {
         vm.expectRevert(LoreBase.InvalidParam.selector);
-        subs.setParams(1e6, 2e6, 5000, 1 hours, 5000); // fee > stake
+        subs.setParams(1e6, 2e6, 1 hours, 5000); // fee > stake
         vm.expectRevert(LoreBase.InvalidParam.selector);
-        subs.setParams(1e6, 0, 5000, 1 hours, 4999); // quorum < 50%
+        subs.setParams(1e6, 0, 1 hours, 4999); // quorum < 50%
         vm.prank(alice);
         vm.expectRevert(LoreBase.NotAuthorized.selector);
-        subs.setParams(1e6, 0, 5000, 1 hours, 5000);
+        subs.setParams(1e6, 0, 1 hours, 5000);
     }
 }

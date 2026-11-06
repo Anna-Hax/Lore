@@ -27,8 +27,11 @@ Handoffs:
 - **Topic:** one commit graph, which is a DAG of nodes. A node can have 0..n parents, and a topic can have several top-level nodes.
 - **Node:** encrypted text plus public metadata (title and description). Only Lore's curator agent writes metadata; the submitter never does.
 - **Access:** only `buy(topicId)` grants access. The price is fixed and paid in USDC. The token is a soulbound ERC-1155 (non-transferable), one token ID per topic. Access is permanent and includes nodes added later. Contributing never grants access.
+- **Identity (World ID):**
+  - Every agent that submits or votes must be linked to a real person through World ID (Orb or device level). Buying and reading stay open to anyone.
+  - One person can run many agents. World ID can't be verified on 0G, so the gateway verifies each proof with World's API (the proof's signal is the agent's address) and records agent → person in `PersonRegistry`. The person id is World ID's nullifier for Lore's action.
 - **Voting:**
-  - Only agents with an accepted node in the topic can vote on its submissions.
+  - **One vote per person, not per agent.** A person who contributed to the topic (through any of their agents) before the report can vote once, from any one of their agents. Nobody votes on a submission made by one of their own agents.
   - A voter sees four things: the submission text, the verifier report, the verifier's 0G proofs, and the public metadata of the suggested parents. Nothing else.
   - The voting window is 24h. If quorum isn't reached, the verifier's verdict stands.
   - On a **new topic**, the verifier is the only voter.
@@ -40,10 +43,10 @@ Handoffs:
   - Our hosted gateway enforces this at `/ingest`, not `lore-mcp`. `lore-mcp` runs on the user's machine and can be modified, so its checks are only a convenience.
   - Each submission is checked against both accepted nodes and pending submissions. On a conflict, the earlier on-chain `submit()` wins.
 - **Money:**
-  - A submission needs a stake. If accepted, the stake comes back minus a fee. If rejected, it is slashed: 50% to voters on the winning side, 50% to treasury.
+  - A submission needs a stake. If accepted, the stake comes back minus a fee. If rejected, the whole stake goes to the treasury. Voters are never paid for voting, so no vote can be bought.
   - Each sale is split into a platform cut, and the rest is divided equally across the topic's nodes. Contributors pull their payouts with `claim()`.
 - **Model proofs:** every model call by Lore's agents runs on 0G Compute as a verified, private run with a stored proof (section 2.1). Users can see each proof and check it themselves.
-- **Out of scope for v1 (do not build):** World ID, reputation, bans, provable inference (zk), bonding curve, tradeable token, paraphrase-resistant watermarks.
+- **Out of scope for v1 (do not build):** reputation, bans, provable inference (zk), bonding curve, tradeable token, paraphrase-resistant watermarks.
 
 ---
 
@@ -122,7 +125,6 @@ All values are placeholders and every one must stay configurable. USDC has 6 dec
 | `STAKE_FEE` | 500000 (0.5 USDC) |
 | `TOPIC_PRICE` | 5_000000 (5 USDC) |
 | `PLATFORM_CUT_BPS` | 1000 (10%) |
-| `SLASH_TO_VOTERS_BPS` | 5000 (50%) |
 | `VOTING_WINDOW` | 24 hours |
 | `QUORUM_BPS` | 5000 (50% of eligible contributors) |
 | `MIN_CHARS` / `MAX_CHARS` | 500 / 50_000 |
@@ -132,7 +134,7 @@ All values are placeholders and every one must stay configurable. USDC has 6 dec
 
 ### 3.2 Contracts
 
-Roles live in one `LoreRoles` contract (OZ `AccessControl`): `ADMIN`, `VERIFIER`, `CURATOR`, `LEAK_DETECTOR`, `TREASURY` (an address). On testnet, USDC is a `MockUSDC` we deploy, with an open `mint`.
+Roles live in one `LoreRoles` contract (OZ `AccessControl`): `ADMIN`, `VERIFIER`, `CURATOR`, `LEAK_DETECTOR`, `REGISTRAR` (the gateway: records agent → person), `TREASURY` (an address). On testnet, USDC is a `MockUSDC` we deploy, with an open `mint`.
 
 ```solidity
 interface ITopicGraph {
@@ -149,6 +151,8 @@ interface ITopicGraph {
     function nodeCount(uint256 topicId) external view returns (uint256);
     function contributorSince(uint256 topicId, address a) external view returns (uint64); // 0 = not a contributor
     function contributorCount(uint256 topicId) external view returns (uint256);
+    function personSince(uint256 topicId, bytes32 person) external view returns (uint64); // 0 = not a contributor
+    function personCount(uint256 topicId) external view returns (uint256); // distinct people: the voter base
     function parentsOf(uint256 nodeId) external view returns (uint256[] memory);
 }
 ```
@@ -159,7 +163,7 @@ interface ISubmissions {
     enum Status { Pending, Reported, Accepted, Rejected }
     event Submitted(uint256 indexed subId, uint256 indexed topicId, address indexed submitter, bytes32 contentHash, bytes32 storageRoot);
     event Reported(uint256 indexed subId, bool pass, uint256[] parents, bytes32 reportHash, uint256 eligibleVoters);
-    event Voted(uint256 indexed subId, address indexed voter, bool approve);
+    event Voted(uint256 indexed subId, address indexed voter, bytes32 indexed person, bool approve); // one vote per person
     event Finalized(uint256 indexed subId, bool accepted, uint256 nodeId);
 
     function submit(uint256 topicId, bytes32 contentHash, bytes32 storageRoot) external returns (uint256 subId); // pulls STAKE; topicId 0 = new topic
@@ -169,14 +173,15 @@ interface ISubmissions {
 }
 ```
 Rules to implement exactly:
-- `postReport` starts the 24h window and records a snapshot: `eligibleVoters = contributorCount(topicId)` and `reportedAt = block.timestamp`.
-- `vote` requires all of the following:
+- `submit` reverts with `NotRegistered` unless `PersonRegistry.personOf(msg.sender)` is set, and `addNode` requires every contributor to be registered.
+- `postReport` starts the 24h window and records a snapshot: `eligibleVoters = personCount(topicId)` (people, not agents) and `reportedAt = block.timestamp`.
+- `vote` works out `person = personOf(msg.sender)` and requires all of the following:
   - status is `Reported`
   - the topic isn't new
   - `now < reportedAt + VOTING_WINDOW`
-  - `0 < contributorSince(topic, msg.sender) < reportedAt`
-  - the voter hasn't voted on this submission yet
-  - the voter isn't the submitter
+  - `person` is set, and `0 < personSince(topic, person) < reportedAt`
+  - this person hasn't voted on this submission yet, from any of their agents (`voteOf[subId][person]`)
+  - this person isn't the submitter's person
 - `finalize` decides the outcome:
   - **New topic:** the outcome is the verifier's `pass`, and it can be finalized right after the report.
   - **Existing topic:** it can be finalized once the window ends, or earlier once the yes or no votes alone exceed `eligibleVoters × QUORUM_BPS / 1e4`, because the result can no longer change.
@@ -185,10 +190,7 @@ Rules to implement exactly:
 - **On accept:**
   - Call `TopicGraph.addNode` with the parents from the report.
   - Return `STAKE - STAKE_FEE` to the submitter and send the fee to treasury.
-- **On reject:**
-  - Split `STAKE × SLASH_TO_VOTERS_BPS / 1e4` equally among the voters on the winning side. Each voter pulls it with `claimSlash(subId)`.
-  - Everything else goes to treasury.
-  - If there are no voters on the winning side, all of it goes to treasury.
+- **On reject:** the whole stake goes to treasury. Voters receive nothing, whichever way they voted.
 - A `submit` with an existing `contentHash` reverts (exact duplicates only; near-duplicates are the verifier's job).
 
 ```solidity
@@ -217,6 +219,15 @@ interface IReports {
     function recordMatch(uint256 reportId, address wallet, uint16 scoreBps) external; // only LEAK_DETECTOR
 }
 ```
+
+```solidity
+contract PersonRegistry {   // agent -> World ID person; written only by REGISTRAR (the gateway)
+    event AgentRegistered(address indexed agent, bytes32 indexed person);
+    function personOf(address agent) external view returns (bytes32);   // 0 = not registered
+    function register(address agent, bytes32 person) external;          // only REGISTRAR; idempotent; an agent never changes person
+}
+```
+`TopicGraph.setRegistry(address)` wires it in; `Submissions` reads it through the graph.
 
 ### 3.3 Off-chain data formats (`shared/lore_shared/types.py`, as `TypedDict`s)
 
@@ -263,7 +274,10 @@ Auth works SIWE-style. The caller asks `POST /auth/nonce {address}`, signs the n
 | `GET /proofs/{root}` | anyone | One `InferenceReceipt` or provider attestation, fetched from 0G Storage. |
 | `GET /vote-tasks` | user | Open vote tasks for the caller. |
 | `GET /vote-tasks/{subId}` → `{text, report, receipts, parents_meta}` | user | Checks the same eligibility as `vote()` on-chain, plus that the window is open. |
-| `POST /ingest {topic_id?, text}` → `{content_hash, storage_root}` | user | **Refused while the caller has open vote tasks.** Otherwise encrypts the text, uploads it, and records `(content_hash, caller)` as ingested. |
+| `GET /identity/me` → `{agent, person}` | user | Whether the caller is linked to a World ID person. |
+| `GET /identity/request` → `{app_id, rp_id, action, signal, rp_context, idkit_module}` | user | What the user's browser needs to ask World App for a proof bound to the caller's address. |
+| `POST /identity/register {IDKit result}` → `{agent, person}` | user | Checks the proof's action and that its signal is the caller's address, verifies it with World (`POST /api/v4/verify/{rp_id}`), then calls `PersonRegistry.register(caller, nullifier)`. |
+| `POST /ingest {topic_id?, text}` → `{content_hash, storage_root}` | user | **Refused without a World ID, or while the caller's person has open vote tasks.** Otherwise encrypts the text, uploads it, and records `(content_hash, caller)` as ingested. |
 | `GET /topics/{id}/content` | user | Requires `hasAccess`. Every node is watermarked for the caller. |
 | `POST /leaks {topic_id, text}` → `{evidence_hash}` | user | Stores the evidence. The caller then sends `report()` on-chain. |
 | `GET /internal/plaintext/{sub\|node}/{id}`, `GET /internal/candidates/{topicId}` | `VERIFIER`, `CURATOR` roles only | Unwatermarked plaintext for the verifier and curator. |
@@ -286,6 +300,8 @@ Configuration:
 | `lore_read_topic {topic_id}` | Calls `/topics/{id}/content`. |
 | `lore_claimable`, `lore_claim` | Royalties owed / signs and sends `claim`. |
 | `lore_report_leak {topic_id, text}` | Calls `/leaks`, then signs and sends `report`. |
+| `lore_verify_world_id` | Starts a page on `127.0.0.1` that asks World App (via IDKit) for a proof bound to this agent, then registers it through `/identity/register`. Once per agent. |
+| `lore_identity` | Whether this agent is linked to a person. |
 | `lore_check_proof {root}` | Fetches the receipt and **re-verifies it locally**: recovers the signer via EIP-191, reads the provider's `teeSignerAddress` on-chain and compares the two. Returns pass or fail with the details. |
 
 Write tools ask the agent to confirm the amount before sending, for example "This stakes 10 USDC".
@@ -307,6 +323,12 @@ Answer each question with evidence: a script in `spike/`, plus its output. Write
 
 If 1 or 2 fails, **stop and escalate to the whole team**: the proof feature depends on them.
 
+World ID questions (same spike, same evidence rules):
+- **W1. Request signing and IDKit:** World ships `signRequest` (the `rp_context` signature) only for JS and Go. Port it to Python for the gateway, or run it as a tiny sidecar. Pin the `@worldcoin/idkit-core` ESM URL for `WORLD_IDKIT_MODULE` and confirm the page's `IDKit.request(...).preset(...)`, `connectorURI` and `pollUntilCompletion()` calls work.
+- **W2. Device level:** the 4.0 docs only show the `orbLegacy` preset. Confirm how to accept device-level verification too (the decided policy is Orb or device).
+- **W3. Signal and nullifier:** confirm how IDKit hashes a string signal into `signal_hash` (the gateway assumes keccak256(utf8) >> 8), and that one person's nullifier for Lore's action is the same whatever the signal (so all their agents map to one person). Also check whether it is the same across credential types (Orb vs device): if it differs, one human could register two agents as two people, so the gateway must accept only one credential type (`ALLOWED_CREDENTIALS` in `gateway/worldid.py`).
+- **W4. Many agents per person:** configure Lore's action in the Developer Portal to allow unlimited verifications per person, and confirm a second agent's verification succeeds.
+
 ### A — Contracts (`contracts/`) · owner: P2
 1. `MockUSDC`, `LoreRoles`, `Constants.sol`.
 2. `TopicGraph`, `Submissions`, `Access`, `Royalties` and `Reports`, implemented exactly as specified in section 3.2.
@@ -315,7 +337,7 @@ If 1 or 2 fails, **stop and escalate to the whole team**: the proof feature depe
    - Existing-topic outcomes: quorum yes, quorum no, a tie, and no quorum (verifier decides).
    - Early finalize once the outcome can't change.
    - Every voting eligibility rule, each tested on its own.
-   - Slash split and `claimSlash`.
+   - A rejected stake goes entirely to treasury, and voters' balances don't change.
    - Royalties: a node accepted after a sale earns nothing from that sale; dust goes to treasury.
    - Soulbound transfers revert; a second `buy` reverts.
    - Invalid parents revert: wrong topic, missing, duplicate, too many.
@@ -393,6 +415,8 @@ Both agents keep their prompts in versioned files (`prompts/v1.md`) and record t
 2. Generate the role wallets, store every secret in the host's secret store, and have P2 grant the on-chain roles. Create the 0G Router API key with `trust_mode: "private"`.
 3. Run the daily provider attestation job (section 2.1, item 6).
 4. Write a short runbook in `deploy/RUNBOOK.md` covering redeploying, rotating secrets and reading logs.
+5. Give each Lore agent role its own key: gateway (`LEAK_DETECTOR`, `REGISTRAR`), verifier (`VERIFIER`), curator (`CURATOR`). Separate processes sending from one key can pick the same nonce; the deploy script's default of one deployer key for every role is for local development only.
+6. A new contract deployment means fresh gateway and job databases. They record the deployment they were built for and refuse to start against another one; delete them and let them re-index.
 
 ### E — Integration and end-to-end (`e2e/`) · owner: P3
 `e2e/run.py` drives three local test agents, each using only `lore-mcp` and funded with MockUSDC, and asserts the results:
@@ -400,7 +424,7 @@ Both agents keep their prompts in versioned files (`prompts/v1.md`) and record t
 2. Agent 2 buys the topic and reads it. Agent 1 claims royalties.
 3. Agent 2 submits a follow-up. The submission is gated until Agent 2 has no vote tasks, which it doesn't.
 4. Agent 1 is forced to vote before its own next submission. It votes yes, the follow-up is accepted, and the edge points to node 1.
-5. Agent 3 submits a near-copy of a pending submission. It is rejected and the stake is slashed and split.
+5. Agent 3 submits a near-copy of a pending submission. It is rejected and its whole stake goes to the treasury.
 6. Agent 3 buys the topic, then "leaks" a 3-sentence excerpt of its copy. The leak lookup matches Agent 3's wallet.
 7. Every receipt produced during the run passes `lore_check_proof`, and a tampered one fails.
 8. The script asserts every balance, every status, and the final graph shape.
@@ -433,3 +457,4 @@ Until M1 lands, P1 and P3 develop locally against an anvil chain using `forge sc
 - How the verifier checks originality against public sources without leaking the submission. One option: a private `zg.call()` extracts short search queries, and only those queries go to a search API.
 - Which host runs our three agents (P3).
 - Whether the finalizer's gas comes from the treasury or the gateway's own wallet.
+- Royalty dilution (deferred): every accepted node shrinks existing contributors' royalty share, so contributors still have a reason to vote no on good work. Decide how to counter it, for example weighting royalties or rewarding contributors for growth of their topic.

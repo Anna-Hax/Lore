@@ -28,7 +28,6 @@ contract Submissions is ISubmissions, LoreBase {
         uint256 fee; // snapshot at submit time
         bytes32 reportHash;
         uint256 nodeId; // set on accept
-        uint256 slashPerVoter; // set on reject
         uint256[] parents;
     }
 
@@ -42,18 +41,16 @@ contract Submissions is ISubmissions, LoreBase {
 
     uint256 public stake = Constants.STAKE;
     uint256 public stakeFee = Constants.STAKE_FEE;
-    uint256 public slashToVotersBps = Constants.SLASH_TO_VOTERS_BPS;
     uint256 public votingWindow = Constants.VOTING_WINDOW;
     uint256 public quorumBps = Constants.QUORUM_BPS;
 
     uint256 public nextSubId = 1;
     mapping(uint256 => Submission) private _subs;
     mapping(bytes32 => bool) public contentHashUsed;
-    mapping(uint256 => mapping(address => uint8)) public voteOf;
-    mapping(uint256 => mapping(address => bool)) public slashClaimed;
+    /// @notice subId => person (World ID) => vote. One vote per person, whichever of their agents cast it.
+    mapping(uint256 => mapping(bytes32 => uint8)) public voteOf;
 
-    event ParamsSet(uint256 stake, uint256 stakeFee, uint256 slashToVotersBps, uint256 votingWindow, uint256 quorumBps);
-    event SlashClaimed(uint256 indexed subId, address indexed voter, uint256 amount);
+    event ParamsSet(uint256 stake, uint256 stakeFee, uint256 votingWindow, uint256 quorumBps);
 
     error UnknownTopic(uint256 topicId);
     error UnknownSubmission(uint256 subId);
@@ -65,7 +62,7 @@ contract Submissions is ISubmissions, LoreBase {
     error AlreadyVoted();
     error SubmitterCannotVote();
     error NotFinalizable();
-    error NothingToClaim();
+    error NotRegistered(address agent);
 
     constructor(LoreRoles roles_, IERC20 usdc_, TopicGraph graph_) LoreBase(roles_) {
         if (address(usdc_) == address(0) || address(graph_) == address(0)) revert ZeroAddress();
@@ -80,20 +77,18 @@ contract Submissions is ISubmissions, LoreBase {
     function setParams(
         uint256 stake_,
         uint256 stakeFee_,
-        uint256 slashToVotersBps_,
         uint256 votingWindow_,
         uint256 quorumBps_
     ) external onlyAdmin {
         if (
-            stakeFee_ > stake_ || slashToVotersBps_ > Constants.BPS || votingWindow_ == 0 || quorumBps_ < 5000
+            stakeFee_ > stake_ || votingWindow_ == 0 || quorumBps_ < 5000
                 || quorumBps_ > Constants.BPS
         ) revert InvalidParam();
         stake = stake_;
         stakeFee = stakeFee_;
-        slashToVotersBps = slashToVotersBps_;
         votingWindow = votingWindow_;
         quorumBps = quorumBps_;
-        emit ParamsSet(stake_, stakeFee_, slashToVotersBps_, votingWindow_, quorumBps_);
+        emit ParamsSet(stake_, stakeFee_, votingWindow_, quorumBps_);
     }
 
     // ---------- flow ----------
@@ -101,6 +96,7 @@ contract Submissions is ISubmissions, LoreBase {
     /// @inheritdoc ISubmissions
     function submit(uint256 topicId, bytes32 contentHash, bytes32 storageRoot) external returns (uint256 subId) {
         if (topicId != 0 && !graph.topicExists(topicId)) revert UnknownTopic(topicId);
+        if (_personOf(msg.sender) == bytes32(0)) revert NotRegistered(msg.sender); // World ID first
         if (contentHashUsed[contentHash]) revert DuplicateContent(contentHash);
         contentHashUsed[contentHash] = true;
 
@@ -133,7 +129,7 @@ contract Submissions is ISubmissions, LoreBase {
         s.parents = parents;
         s.reportHash = reportHash;
         s.reportedAt = uint64(block.timestamp);
-        s.eligibleVoters = s.topicId == 0 ? 0 : graph.contributorCount(s.topicId);
+        s.eligibleVoters = s.topicId == 0 ? 0 : graph.personCount(s.topicId); // people, not agents
 
         emit Reported(subId, pass, parents, reportHash, s.eligibleVoters);
     }
@@ -141,12 +137,12 @@ contract Submissions is ISubmissions, LoreBase {
     /// @inheritdoc ISubmissions
     function vote(uint256 subId, bool approve) external {
         Submission storage s = _get(subId);
-        _checkVote(s, subId, msg.sender);
+        bytes32 person = _checkVote(s, subId, msg.sender);
 
-        voteOf[subId][msg.sender] = approve ? VOTE_YES : VOTE_NO;
+        voteOf[subId][person] = approve ? VOTE_YES : VOTE_NO;
         if (approve) s.yes++;
         else s.no++;
-        emit Voted(subId, msg.sender, approve);
+        emit Voted(subId, msg.sender, person, approve);
     }
 
     /// @inheritdoc ISubmissions
@@ -167,29 +163,10 @@ contract Submissions is ISubmissions, LoreBase {
             emit Finalized(subId, true, nodeId);
         } else {
             s.status = Status.Rejected;
-            // Rejected => the winning side voted no.
-            uint256 winners = s.no;
-            uint256 toTreasury = s.stake;
-            if (winners > 0) {
-                uint256 perVoter = (s.stake * slashToVotersBps / Constants.BPS) / winners;
-                s.slashPerVoter = perVoter;
-                toTreasury -= perVoter * winners; // treasury share + rounding dust
-            }
-            if (toTreasury > 0) usdc.safeTransfer(treasury, toTreasury);
+            // The whole stake goes to the platform. Voters are never paid, so no vote is bought.
+            if (s.stake > 0) usdc.safeTransfer(treasury, s.stake);
             emit Finalized(subId, false, 0);
         }
-    }
-
-    /// @notice A voter on the winning (no) side of a rejected submission pulls their share of the slash.
-    function claimSlash(uint256 subId) external {
-        Submission storage s = _get(subId);
-        if (s.status != Status.Rejected) revert WrongStatus(s.status);
-        if (voteOf[subId][msg.sender] != VOTE_NO || slashClaimed[subId][msg.sender]) revert NothingToClaim();
-        uint256 amount = s.slashPerVoter;
-        if (amount == 0) revert NothingToClaim();
-        slashClaimed[subId][msg.sender] = true;
-        usdc.safeTransfer(msg.sender, amount);
-        emit SlashClaimed(subId, msg.sender, amount);
     }
 
     // ---------- views (for the gateway, so its checks mirror the contract exactly) ----------
@@ -208,10 +185,12 @@ contract Submissions is ISubmissions, LoreBase {
         Submission storage s = _subs[subId];
         if (s.status != Status.Reported || s.topicId == 0) return false;
         if (block.timestamp >= uint256(s.reportedAt) + votingWindow) return false;
-        uint64 since = graph.contributorSince(s.topicId, voter);
+        bytes32 person = _personOf(voter);
+        if (person == bytes32(0)) return false;
+        uint64 since = graph.personSince(s.topicId, person);
         if (since == 0 || since >= s.reportedAt) return false;
-        if (voteOf[subId][voter] != VOTE_NONE) return false;
-        return voter != s.submitter;
+        if (voteOf[subId][person] != VOTE_NONE) return false;
+        return person != _personOf(s.submitter);
     }
 
     /// @notice True iff finalize(subId) would succeed right now. Used by the gateway's finalizer.
@@ -238,14 +217,22 @@ contract Submissions is ISubmissions, LoreBase {
         s = _subs[subId];
     }
 
-    function _checkVote(Submission storage s, uint256 subId, address voter) internal view {
+    /// @dev Eligibility is per person: a person who contributed to the topic before the report can vote once,
+    ///      from any of their agents, and never on a submission by one of their own agents.
+    function _checkVote(Submission storage s, uint256 subId, address voter) internal view returns (bytes32 person) {
         if (s.status != Status.Reported) revert WrongStatus(s.status);
         if (s.topicId == 0) revert NewTopicNoVoting();
         if (block.timestamp >= uint256(s.reportedAt) + votingWindow) revert VotingClosed();
-        uint64 since = graph.contributorSince(s.topicId, voter);
+        person = _personOf(voter);
+        if (person == bytes32(0)) revert NotRegistered(voter);
+        uint64 since = graph.personSince(s.topicId, person);
         if (since == 0 || since >= s.reportedAt) revert NotEligible();
-        if (voteOf[subId][voter] != VOTE_NONE) revert AlreadyVoted();
-        if (voter == s.submitter) revert SubmitterCannotVote();
+        if (voteOf[subId][person] != VOTE_NONE) revert AlreadyVoted();
+        if (person == _personOf(s.submitter)) revert SubmitterCannotVote();
+    }
+
+    function _personOf(address agent) internal view returns (bytes32) {
+        return graph.registry().personOf(agent);
     }
 
     function _finalizable(Submission storage s) internal view returns (bool) {

@@ -308,6 +308,62 @@
   },
   {
     "type": "function",
+    "name": "personCount",
+    "inputs": [
+      {
+        "name": "topicId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "personSince",
+    "inputs": [
+      {
+        "name": "topicId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "person",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "registry",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract PersonRegistry"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "roles",
     "inputs": [],
     "outputs": [
@@ -358,6 +414,19 @@
         "name": "metaHash",
         "type": "bytes32",
         "internalType": "bytes32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setRegistry",
+    "inputs": [
+      {
+        "name": "r",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "outputs": [],
@@ -555,6 +624,19 @@
   },
   {
     "type": "event",
+    "name": "RegistrySet",
+    "inputs": [
+      {
+        "name": "registry",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "RoyaltiesSet",
     "inputs": [
       {
@@ -631,6 +713,17 @@
     "type": "error",
     "name": "NotAuthorized",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotRegistered",
+    "inputs": [
+      {
+        "name": "agent",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
   },
   {
     "type": "error",

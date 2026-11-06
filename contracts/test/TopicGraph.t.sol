@@ -10,6 +10,11 @@ import {ITopicGraph} from "../src/interfaces/ILore.sol";
 contract TopicGraphTest is Base {
     address alice = makeAddr("alice");
 
+    function setUp() public override {
+        super.setUp();
+        _ensurePerson(alice); // every contributor has a World ID
+    }
+
     function _add(uint256 topicId, uint256[] memory parents) internal returns (uint256 t, uint256 n) {
         vm.prank(address(subs));
         (t, n) = graph.addNode(topicId, alice, _hash(), bytes32(0), parents);

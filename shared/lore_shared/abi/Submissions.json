@@ -65,19 +65,6 @@
   },
   {
     "type": "function",
-    "name": "claimSlash",
-    "inputs": [
-      {
-        "name": "subId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "contentHashUsed",
     "inputs": [
       {
@@ -191,11 +178,6 @@
           },
           {
             "name": "nodeId",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "slashPerVoter",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -323,11 +305,6 @@
         "internalType": "uint256"
       },
       {
-        "name": "slashToVotersBps_",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
         "name": "votingWindow_",
         "type": "uint256",
         "internalType": "uint256"
@@ -340,43 +317,6 @@
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "slashClaimed",
-    "inputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "slashToVotersBps",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -488,8 +428,8 @@
       },
       {
         "name": "",
-        "type": "address",
-        "internalType": "address"
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
     "outputs": [
@@ -575,12 +515,6 @@
         "internalType": "uint256"
       },
       {
-        "name": "slashToVotersBps",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
         "name": "votingWindow",
         "type": "uint256",
         "indexed": false,
@@ -625,31 +559,6 @@
       },
       {
         "name": "eligibleVoters",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "SlashClaimed",
-    "inputs": [
-      {
-        "name": "subId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "voter",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -711,6 +620,12 @@
         "internalType": "address"
       },
       {
+        "name": "person",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
         "name": "approve",
         "type": "bool",
         "indexed": false,
@@ -762,8 +677,14 @@
   },
   {
     "type": "error",
-    "name": "NothingToClaim",
-    "inputs": []
+    "name": "NotRegistered",
+    "inputs": [
+      {
+        "name": "agent",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
   },
   {
     "type": "error",

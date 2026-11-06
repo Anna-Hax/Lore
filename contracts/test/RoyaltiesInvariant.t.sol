@@ -84,6 +84,7 @@ contract RoyaltiesInvariantTest is Base {
         super.setUp();
         handler = new RoyaltiesHandler(usdc, graph, access, royalties, admin);
         graph.setSubmissions(address(handler));
+        for (uint256 i; i < 4; ++i) _ensurePerson(handler.contributors(i));
         targetContract(address(handler));
     }
 
@@ -114,6 +115,7 @@ contract RoyaltiesInvariantTest is Base {
         access.setTopicPrice(price);
 
         graph.setSubmissions(address(this));
+        _ensurePerson(makeAddr("a"));
         (uint256 t,) = graph.addNode(0, makeAddr("a"), keccak256("n0"), 0, new uint256[](0));
         uint256 n = 1 + uint256(extraNodes) % 20;
         for (uint256 i = 1; i < n; ++i) {
