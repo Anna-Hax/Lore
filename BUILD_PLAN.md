@@ -40,7 +40,7 @@ Handoffs:
   - Our hosted gateway enforces this at `/ingest`, not `lore-mcp`. `lore-mcp` runs on the user's machine and can be modified, so its checks are only a convenience.
   - Each submission is checked against both accepted nodes and pending submissions. On a conflict, the earlier on-chain `submit()` wins.
 - **Money:**
-  - A submission needs a stake. If accepted, the stake comes back minus a fee. If rejected, it is slashed: 50% to voters on the winning side, 50% to treasury.
+  - A submission needs a stake. If accepted, the stake comes back minus a fee. If rejected, the whole stake goes to the treasury. Voters are never paid for voting, so no vote can be bought.
   - Each sale is split into a platform cut, and the rest is divided equally across the topic's nodes. Contributors pull their payouts with `claim()`.
 - **Model proofs:** every model call by Lore's agents runs on 0G Compute as a verified, private run with a stored proof (section 2.1). Users can see each proof and check it themselves.
 - **Out of scope for v1 (do not build):** World ID, reputation, bans, provable inference (zk), bonding curve, tradeable token, paraphrase-resistant watermarks.
@@ -122,7 +122,6 @@ All values are placeholders and every one must stay configurable. USDC has 6 dec
 | `STAKE_FEE` | 500000 (0.5 USDC) |
 | `TOPIC_PRICE` | 5_000000 (5 USDC) |
 | `PLATFORM_CUT_BPS` | 1000 (10%) |
-| `SLASH_TO_VOTERS_BPS` | 5000 (50%) |
 | `VOTING_WINDOW` | 24 hours |
 | `QUORUM_BPS` | 5000 (50% of eligible contributors) |
 | `MIN_CHARS` / `MAX_CHARS` | 500 / 50_000 |
@@ -185,10 +184,7 @@ Rules to implement exactly:
 - **On accept:**
   - Call `TopicGraph.addNode` with the parents from the report.
   - Return `STAKE - STAKE_FEE` to the submitter and send the fee to treasury.
-- **On reject:**
-  - Split `STAKE × SLASH_TO_VOTERS_BPS / 1e4` equally among the voters on the winning side. Each voter pulls it with `claimSlash(subId)`.
-  - Everything else goes to treasury.
-  - If there are no voters on the winning side, all of it goes to treasury.
+- **On reject:** the whole stake goes to treasury. Voters receive nothing, whichever way they voted.
 - A `submit` with an existing `contentHash` reverts (exact duplicates only; near-duplicates are the verifier's job).
 
 ```solidity
@@ -315,7 +311,7 @@ If 1 or 2 fails, **stop and escalate to the whole team**: the proof feature depe
    - Existing-topic outcomes: quorum yes, quorum no, a tie, and no quorum (verifier decides).
    - Early finalize once the outcome can't change.
    - Every voting eligibility rule, each tested on its own.
-   - Slash split and `claimSlash`.
+   - A rejected stake goes entirely to treasury, and voters' balances don't change.
    - Royalties: a node accepted after a sale earns nothing from that sale; dust goes to treasury.
    - Soulbound transfers revert; a second `buy` reverts.
    - Invalid parents revert: wrong topic, missing, duplicate, too many.
@@ -400,7 +396,7 @@ Both agents keep their prompts in versioned files (`prompts/v1.md`) and record t
 2. Agent 2 buys the topic and reads it. Agent 1 claims royalties.
 3. Agent 2 submits a follow-up. The submission is gated until Agent 2 has no vote tasks, which it doesn't.
 4. Agent 1 is forced to vote before its own next submission. It votes yes, the follow-up is accepted, and the edge points to node 1.
-5. Agent 3 submits a near-copy of a pending submission. It is rejected and the stake is slashed and split.
+5. Agent 3 submits a near-copy of a pending submission. It is rejected and its whole stake goes to the treasury.
 6. Agent 3 buys the topic, then "leaks" a 3-sentence excerpt of its copy. The leak lookup matches Agent 3's wallet.
 7. Every receipt produced during the run passes `lore_check_proof`, and a tampered one fails.
 8. The script asserts every balance, every status, and the final graph shape.
@@ -433,3 +429,4 @@ Until M1 lands, P1 and P3 develop locally against an anvil chain using `forge sc
 - How the verifier checks originality against public sources without leaking the submission. One option: a private `zg.call()` extracts short search queries, and only those queries go to a search API.
 - Which host runs our three agents (P3).
 - Whether the finalizer's gas comes from the treasury or the gateway's own wallet.
+- Royalty dilution (deferred): every accepted node shrinks existing contributors' royalty share, so contributors still have a reason to vote no on good work. Decide how to counter it, for example weighting royalties or rewarding contributors for growth of their topic.
