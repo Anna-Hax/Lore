@@ -4,7 +4,7 @@ from eth_account import Account
 from eth_account.messages import encode_defunct
 from eth_utils import keccak
 
-from lore_mcp.proof import badge, check
+from gateway.proof import badge, check
 
 TEE, OTHER = Account.create(), Account.create()
 OUT = '{"title": "x"}'

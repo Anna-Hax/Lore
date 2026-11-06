@@ -231,23 +231,18 @@ def test_curator_skips_nodes_that_already_have_metadata(tmp_path):
 
 def test_gateway_lag_or_outage_never_kills_a_job(tmp_path):
     import httpx
-    from eth_account import Account
 
     from gwclient import Gateway
 
-    key = Account.create().key
     state = {"mode": "404"}
 
     def handler(req):
-        if req.url.path == "/auth/nonce":
-            return httpx.Response(200, json={"message": f"Sign in to Lore\nAddress: {Account.from_key(key).address.lower()}\nNonce: {'0' * 32}"})
-        if req.url.path == "/auth/verify":
-            return httpx.Response(200, json={"token": "t"})
+        assert req.headers["Authorization"] == "Bearer service-secret"  # services use the shared secret, no login
         if state["mode"] == "down":
             raise httpx.ConnectError("gateway restarting")
         return httpx.Response(404 if state["mode"] == "404" else 503)
 
-    gw = Gateway("http://gw", key.hex(), http=httpx.Client(base_url="http://gw", transport=httpx.MockTransport(handler)))
+    gw = Gateway("http://gw", "service-secret", http=httpx.Client(base_url="http://gw", transport=httpx.MockTransport(handler)))
     chain, j = chain_with("Submitted", "subId", [7]), Jobs(str(tmp_path / "v.db"))
     for mode in ["404"] * 4 + ["503"] * 4 + ["down"] * 4:
         state["mode"] = mode

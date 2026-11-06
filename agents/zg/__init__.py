@@ -32,7 +32,7 @@ class ZGUnavailable(ZGError):
 
 
 def _hash(obj) -> str:
-    return canonical_hash(obj)  # P3's canonical JSON; lore-mcp's proof.response_hash computes the same
+    return canonical_hash(obj)  # P3's canonical JSON; gateway/proof.py's response_hash computes the same
 
 
 def recover_signer(text: str, signature: str) -> str:

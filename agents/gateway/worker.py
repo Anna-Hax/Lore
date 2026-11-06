@@ -92,7 +92,7 @@ def finalize_due(db, chain) -> None:
 def run(db_path: str, chain, storage, best_match, start_block: int) -> None:
     """Index on a fast loop; do slow work (downloads, transactions) on another thread so it never stalls indexing.
 
-    The vote-before-submit gate refuses /ingest when indexing falls more than MAX_LAG blocks behind, so
+    The vote-before-submit gate refuses lore_submit when indexing falls more than MAX_LAG blocks behind, so
     indexing must never wait on a storage download or a finalize receipt.
     """
     import threading

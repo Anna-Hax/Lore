@@ -1,10 +1,12 @@
-"""Gateway HTTP API (BUILD_PLAN §3.4).
+"""Lore's one hosted service: the MCP server users connect to, plus the internal API for Lore's own agents.
 
-Plaintext only ever leaves through endpoints that just passed a live on-chain
-check: access (buyers), vote eligibility (voters) or role (verifier, curator).
+    /mcp, /authorize, /token, /register, /.well-known/...   hosted MCP + OAuth (gateway/mcp_server.py, oauth.py)
+    /login                                                  the World ID login page OAuth sends users to
+    /internal/*                                             verifier and curator only (shared service secret)
 
-`content` and `storage` are P3's libraries (lore_shared.crypto/watermark and
-lore_shared.storage). The gateway only needs:
+There is no other login: users are their World ID; Lore's own agents use LORE_SERVICE_TOKEN.
+
+`content` and `storage` are P3's libraries. The gateway only needs:
     content.content_hash(text) -> "0x.."
     content.encrypt_node(text, content_hash) -> bytes
     content.decrypt_node(blob, content_hash) -> str
@@ -14,288 +16,141 @@ lore_shared.storage). The gateway only needs:
     storage.download(root) -> bytes
 """
 
-import json
+import hmac
+import html
 import time
+from contextlib import asynccontextmanager
 
-from eth_utils import keccak
 from fastapi import Depends, FastAPI, Header, HTTPException
-from pydantic import BaseModel, Field
+from fastapi.responses import HTMLResponse
 
-from lore_shared.constants import MAX_CHARS
-
-INGEST_TTL = 600  # an ingest must be submitted on-chain within 10 min, so it can't skip votes assigned later
-MAX_LAG = 60      # blocks (~30 s at 0G's ~0.49 s blocks; worker.SYNC_EVERY is 3 s): refuse ingests while the
-                  # indexer is really behind, or the vote gate is blind; normal sync jitter stays well under it
-from gateway import auth, tasks
-from gateway.db import connect, synced_block
+from gateway.mcp_server import build_mcp
+from gateway.oauth import WorldIDOAuth
+from gateway.service import Service
 from gateway.worldid import WorldIDError
 
+LOGIN_PAGE = """<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
+<title>Log in to Lore</title>
+<style>body{font:16px system-ui,sans-serif;max-width:36rem;margin:3rem auto;padding:0 1rem}a{word-break:break-all}
+.app{padding:.75rem 1rem;border:1px solid #8884;border-radius:.5rem}.warn{color:#b45309}button{font:inherit;padding:.5rem 1.25rem}</style>
+</head><body><h1>Log in to Lore with World ID</h1>
+<div class="app"><p><b>__CLIENT__</b> is asking to act as you on Lore: read topics you bought, see your vote tasks,
+and prepare transactions from your wallets.</p><p>After you approve, you will be sent to <b>__HOST__</b>.</p>__WARNING__</div>
+<p>Only continue if you started this login from your own MCP client just now.</p>
+<p><button id="go">Approve and verify with World ID</button></p>
+<p id="s"></p><p><a id="l" hidden>Open in World App</a></p>
+<script type="module">
+const pending = new URLSearchParams(location.search).get("pending");
+const say = t => document.getElementById("s").textContent = t;
+document.getElementById("go").addEventListener("click", async (ev) => {
+  ev.target.disabled = true;
+  try {
+    const r = await fetch("/login/request?pending=" + encodeURIComponent(pending)); const req = await r.json();
+    if (!r.ok) throw new Error(req.detail || r.status);
+    // ponytail: IDKit 4.0 core API as documented (IDKit.request + orbLegacy preset); pin and confirm in spike W1.
+    const { IDKit, orbLegacy } = await import(req.idkit_module);
+    const request = await IDKit.request({ app_id: req.app_id, action: req.action, rp_context: req.rp_context })
+                               .preset(orbLegacy({ signal: req.signal }));
+    const a = document.getElementById("l"); a.href = request.connectorURI; a.hidden = false;
+    say("Open this link with World App on your phone (or scan it there), then approve.");
+    const result = await request.pollUntilCompletion();
+    say("Checking your proof\\u2026");
+    const done = await fetch("/login/complete?pending=" + encodeURIComponent(pending),
+                             { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(result) });
+    const body = await done.json();
+    if (!done.ok) throw new Error(body.detail || done.status);
+    say("Logged in. Returning to your MCP client\\u2026"); location.href = body.redirect;  // scheme checked server-side
+  } catch (e) { say("Login failed: " + e.message); ev.target.disabled = false; }
+});
+</script></body></html>"""
+WARNING = ('<p class="warn">This app is not on your own computer. If you did not start this login yourself, '
+           'close this page: approving would give that app access to your Lore account.</p>')
 
-class NonceIn(BaseModel):
-    address: str
+
+def login_page(p: dict) -> str:
+    """The consent screen. Every value from the client is escaped: client names are attacker-chosen."""
+    return (LOGIN_PAGE.replace("__CLIENT__", html.escape(p["client_name"]))
+            .replace("__HOST__", html.escape(p["redirect_host"]))
+            .replace("__WARNING__", "" if p["local"] else WARNING))
 
 
-class VerifyIn(BaseModel):
-    address: str
-    message: str
-    signature: str
+def create_app(db_path: str, chain, content, storage, now=lambda: int(time.time()), *, world=None,
+               service_token: str | None = None, public_url: str = "http://127.0.0.1:8080",
+               provider_signer=None) -> FastAPI:
+    """world: gateway.worldid.WorldID (None: nobody can log in). service_token: the verifier/curator secret."""
+    service = Service(db_path, chain, content, storage, now, provider_signer)
+    oauth = WorldIDOAuth(db_path, public_url, now)
+    mcp = build_mcp(service, oauth, public_url)
+    mcp_app = mcp.streamable_http_app(host="0.0.0.0")  # also creates the session manager the lifespan runs
 
+    @asynccontextmanager
+    async def lifespan(_):
+        async with mcp.session_manager.run():
+            yield
 
-class IngestIn(BaseModel):
-    text: str = Field(max_length=MAX_CHARS)  # every ingest is a paid upload; cap it
-    topic_id: int = 0  # 0 = new topic
+    app = FastAPI(title="Lore gateway", lifespan=lifespan)
+    app.state.service, app.state.oauth, app.state.mcp = service, oauth, mcp
 
+    # --- Lore's own agents: shared service secret, compared in constant time ---
+    def lore_service(authorization: str = Header(None)) -> None:
+        given = (authorization or "").removeprefix("Bearer ").strip()
+        if not service_token or not hmac.compare_digest(given.encode(), service_token.encode()):
+            raise HTTPException(401, "Lore service token required")
 
-class LeakIn(BaseModel):
-    topic_id: int
-    text: str = Field(max_length=MAX_CHARS)
-
-
-def create_app(db_path: str, chain, content, storage, now=lambda: int(time.time()), world=None) -> FastAPI:
-    """world: a gateway.worldid.WorldID (None disables World ID registration)."""
-    app = FastAPI(title="Lore gateway")
-
-    def db():
-        conn = connect(db_path)
+    @app.get("/internal/plaintext/{kind}/{iid}", dependencies=[Depends(lore_service)])
+    def internal_plaintext(kind: str, iid: int):
+        if kind not in ("sub", "node"):
+            raise HTTPException(404, "kind must be sub or node")
         try:
-            with conn:
-                yield conn
-        finally:
-            conn.close()
+            return service.internal_plaintext(kind, iid)
+        except LookupError as e:
+            raise HTTPException(404, str(e)) from e
 
-    # scope="function": commit before the response is sent, so a failed write is a 500, never a silent 200.
-    DB = Depends(db, scope="function")
+    @app.get("/internal/candidates/{tid}", dependencies=[Depends(lore_service)])
+    def internal_candidates(tid: int):
+        return service.internal_candidates(tid)
 
-    def gated(conn, s) -> bool:
-        """True iff this on-chain submission is the content its own submitter ingested through us, recently.
+    @app.get("/internal/topics/{tid}", dependencies=[Depends(lore_service)])
+    def internal_topic(tid: int):
+        try:
+            return service.topic(tid)
+        except Exception as e:
+            raise HTTPException(404, str(e)) from e
 
-        Anyone can copy a (content_hash, storage_root) pair from a failed or front-run tx and submit it; without
-        this check the gateway would decrypt someone else's text for the copier's accomplices.
-        """
-        ing = conn.execute("SELECT * FROM ingests WHERE content_hash=?", (s["content_hash"],)).fetchone()
-        return (bool(ing) and ing["storage_root"] == s["storage_root"] and ing["caller"] == s["submitter"]
-                and s["submitted_at"] is not None and s["submitted_at"] - ing["ingested_at"] <= INGEST_TTL)
+    # --- World ID login (the OAuth authorize step sends users here) ---
+    def pending_or_404(pending: str) -> dict:
+        p = oauth.pending(pending)
+        if p is None:
+            raise HTTPException(404, "this login expired; start again from your MCP client")
+        return p
 
-    def caller(authorization: str = Header(None), conn=DB) -> str:
-        token = (authorization or "").removeprefix("Bearer ").strip()
-        addr = auth.address_for(conn, token) if token else None
-        if not addr:
-            raise HTTPException(401, "sign in first: POST /auth/nonce then /auth/verify")
-        return addr
+    @app.get("/login", response_class=HTMLResponse)
+    def login(pending: str):
+        return login_page(pending_or_404(pending))
 
-    def lore_role(addr: str = Depends(caller)) -> str:
-        if not (chain.has_role("VERIFIER", addr) or chain.has_role("CURATOR", addr)):
-            raise HTTPException(403, "verifier or curator role required")
-        return addr
-
-    def plaintext(content_hash: str, root: str) -> str:
-        return content.decrypt_node(storage.download(root), content_hash)
-
-    def meta(raw):
-        return json.loads(raw) if raw else None
-
-    # --- auth ---
-    @app.post("/auth/nonce")
-    def nonce(body: NonceIn, conn=DB):
-        return {"message": auth.new_message(conn, body.address)}
-
-    @app.post("/auth/verify")
-    def verify(body: VerifyIn, conn=DB):
-        token = auth.verify(conn, body.address, body.message, body.signature)
-        if not token:
-            raise HTTPException(401, "bad or expired signature")
-        return {"token": token}
-
-    # --- public ---
-    @app.get("/topics")
-    def topics(conn=DB):
-        rows = conn.execute(
-            "SELECT t.id, t.meta_json, COUNT(n.id) AS n FROM topics t LEFT JOIN nodes n ON n.topic_id=t.id"
-            " GROUP BY t.id ORDER BY t.id"
-        )
-        price = chain.topic_price()  # settable on-chain by ADMIN
-        return [{"topic_id": r["id"], "meta": meta(r["meta_json"]), "node_count": r["n"], "price": price}
-                for r in rows]
-
-    @app.get("/topics/{tid}")
-    def topic(tid: int, conn=DB):
-        t = conn.execute("SELECT * FROM topics WHERE id=?", (tid,)).fetchone()
-        if not t:
-            raise HTTPException(404, "no such topic")
-        nodes = conn.execute("SELECT id, contributor, meta_json FROM nodes WHERE topic_id=? ORDER BY id", (tid,)).fetchall()
-        return {
-            "topic_id": tid, "meta": meta(t["meta_json"]), "price": chain.topic_price(),
-            "nodes": [{
-                "node_id": n["id"], "contributor": n["contributor"], "meta": meta(n["meta_json"]),
-                "parents": [e[0] for e in conn.execute("SELECT parent FROM edges WHERE child=?", (n["id"],))],
-            } for n in nodes],
-        }
-
-    @app.get("/proofs/{root}")
-    def proof(root: str):
-        return json.loads(storage.download(root))
-
-    # --- users ---
-    @app.get("/vote-tasks")
-    def vote_tasks(addr=Depends(caller), conn=DB):
-        return tasks.open_vote_tasks(conn, chain, addr, now())
-
-    @app.get("/vote-tasks/{sid}")
-    def vote_task(sid: int, addr=Depends(caller), conn=DB):
-        if not tasks.can_vote(conn, chain, sid, addr):
-            raise HTTPException(403, "not eligible to vote on this submission")
-        s = conn.execute("SELECT * FROM submissions WHERE id=?", (sid,)).fetchone()
-        report = json.loads(storage.download(s["report_hash"]))
-        # Voters get their own watermarked copy, so a leak from a vote task is traceable too. Content that its
-        # submitter didn't ingest is never decrypted: it may be someone else's text (see gated()).
-        text = (content.watermark(plaintext(s["content_hash"], s["storage_root"]), addr, f"sub:{sid}")
-                if gated(conn, s) else None)
-        parents = conn.execute(
-            f"SELECT id, meta_json FROM nodes WHERE id IN ({','.join('?' * len(report['parents']))})",
-            [p["node_id"] for p in report["parents"]],
-        ).fetchall() if report["parents"] else []
-        if text is not None:  # logged before the copy leaves: the request commits before responding
-            conn.execute("INSERT OR IGNORE INTO deliveries VALUES (?, ?, ?)", (s["topic_id"], addr, f"sub:{sid}"))
-        return {
-            "sub_id": sid, "topic_id": s["topic_id"], "text": text,
-            "report": report, "receipts": report.get("receipts", []),
-            "parents_meta": [{"node_id": p["id"], "meta": meta(p["meta_json"])} for p in parents],
-        }
-
-    @app.get("/inbox")
-    def inbox(since_node: int = 0, addr=Depends(caller), conn=DB):
-        """Everything new for the caller, in one poll: open vote tasks, their submissions' status,
-        and nodes added (after `since_node`) to topics they bought or contributed to."""
-        subs = conn.execute(
-            "SELECT id, topic_id, status, node_id FROM submissions WHERE submitter=? ORDER BY id DESC LIMIT 50", (addr,)
-        ).fetchall()
-        nodes = conn.execute(
-            "SELECT n.id, n.topic_id, n.meta_json FROM nodes n WHERE n.id > ? AND n.topic_id IN ("
-            " SELECT topic_id FROM purchases WHERE buyer=? UNION SELECT topic_id FROM nodes WHERE contributor=?)"
-            " ORDER BY n.id LIMIT 100", (since_node, addr, addr),
-        ).fetchall()
-        return {
-            "vote_tasks": tasks.open_vote_tasks(conn, chain, addr, now()),
-            "submissions": [{"sub_id": r["id"], "topic_id": r["topic_id"], "status": r["status"], "node_id": r["node_id"]}
-                            for r in subs],
-            "new_nodes": [{"node_id": r["id"], "topic_id": r["topic_id"], "title": (meta(r["meta_json"]) or {}).get("title")}
-                          for r in nodes],
-            "latest_node": conn.execute("SELECT COALESCE(MAX(id), 0) FROM nodes").fetchone()[0],
-        }
-
-    # --- World ID: one person, many agents, one vote ---
-    def need_world():
+    @app.get("/login/request")
+    def login_request(pending: str):
+        pending_or_404(pending)
         if world is None:
             raise HTTPException(503, "World ID is not configured on this gateway")
-        return world
-
-    @app.get("/identity/me")
-    def identity_me(addr=Depends(caller)):
-        return {"agent": addr, "person": chain.person_of(addr)}
-
-    @app.get("/identity/request")
-    def identity_request(addr=Depends(caller)):
         try:
-            return need_world().request(addr)
+            return world.request(pending)  # the proof's signal is this login's own id
         except NotImplementedError as e:
             raise HTTPException(503, str(e)) from e
 
-    @app.post("/identity/register")
-    def identity_register(result: dict, addr=Depends(caller)):
-        """Verify a World ID proof made for the calling agent, then record agent -> person on-chain."""
+    @app.post("/login/complete")
+    def login_complete(pending: str, result: dict):
+        pending_or_404(pending)
+        if world is None:
+            raise HTTPException(503, "World ID is not configured on this gateway")
         try:
-            person = need_world().verify(result, addr)
+            person = world.verify(result, pending)
         except WorldIDError as e:
             raise HTTPException(400, str(e)) from e
-        current = chain.person_of(addr)
-        if current and current != person:
-            raise HTTPException(409, "this agent is already linked to a different person")
-        if not current:
-            chain.send("PersonRegistry", "register", chain.w3.to_checksum_address(addr), bytes.fromhex(person[2:]))
-        return {"agent": addr, "person": person}
+        redirect = oauth.complete_login(pending, person)
+        if redirect is None:  # expired or already used meanwhile
+            raise HTTPException(404, "this login expired; start again from your MCP client")
+        return {"redirect": redirect}
 
-    @app.post("/ingest")
-    def ingest(body: IngestIn, addr=Depends(caller), conn=DB):
-        try:  # refuse reserved watermark characters (e.g. someone's marked copy) before anything is stored
-            content.validate_plaintext(body.text)
-        except ValueError as e:
-            raise HTTPException(422, str(e)) from e
-        # The contract refuses unregistered submitters anyway; say so before they stake.
-        # (Skipped only when World ID isn't configured, e.g. in library-integration tests.)
-        if world is not None and not chain.person_of(addr):
-            raise HTTPException(403, "verify your World ID first (lore_verify_world_id)")
-        if chain.latest() - synced_block(conn) > MAX_LAG:
-            raise HTTPException(503, "Lore is catching up with the chain; try again in a few seconds")
-        if tasks.open_vote_tasks(conn, chain, addr, now()):  # the vote-before-submit gate lives here, server side
-            raise HTTPException(409, "finish your open vote tasks before submitting (GET /vote-tasks)")
-        ch = content.content_hash(body.text)
-        prior = conn.execute("SELECT * FROM ingests WHERE content_hash=?", (ch,)).fetchone()
-        if prior:
-            submitted = conn.execute("SELECT 1 FROM submissions WHERE content_hash=?", (ch,)).fetchone()
-            if prior["caller"] == addr and not submitted:  # retry after a failed approve/submit: restart the clock
-                conn.execute("UPDATE ingests SET ingested_at=?, topic_id=? WHERE content_hash=?", (now(), body.topic_id, ch))
-                return {"content_hash": ch, "storage_root": prior["storage_root"]}
-            raise HTTPException(409, "this exact text was already submitted")
-        root = storage.upload(content.encrypt_node(body.text, ch))
-        conn.execute("INSERT INTO ingests VALUES (?, ?, ?, ?, ?)", (ch, addr, root, body.topic_id, now()))
-        return {"content_hash": ch, "storage_root": root}
-
-    @app.get("/topics/{tid}/content")
-    def read(tid: int, addr=Depends(caller), conn=DB):
-        if not chain.has_access(tid, addr):  # live on-chain read, never cached
-            raise HTTPException(403, "buy this topic first")
-        nodes = conn.execute(
-            "SELECT * FROM nodes WHERE topic_id=? AND storage_root IS NOT NULL ORDER BY id", (tid,)
-        ).fetchall()
-        out = [{
-            "node_id": n["id"], "meta": meta(n["meta_json"]),
-            "parents": [e[0] for e in conn.execute("SELECT parent FROM edges WHERE child=?", (n["id"],))],
-            "text": content.watermark(plaintext(n["content_hash"], n["storage_root"]), addr, f"node:{n['id']}"),
-        } for n in nodes]
-        # Write last: the write lock is held only until the request commits (before responding), never during
-        # downloads. One row per (wallet, node copy), so a leak can be traced to the exact copy.
-        conn.executemany("INSERT OR IGNORE INTO deliveries VALUES (?, ?, ?)",
-                         [(tid, addr, f"node:{n['id']}") for n in nodes])
-        return {"nodes": out}
-
-    @app.post("/leaks")
-    def leak(body: LeakIn, addr=Depends(caller), conn=DB):
-        h = "0x" + keccak(text=body.text).hex()
-        conn.execute("INSERT OR IGNORE INTO evidence VALUES (?, ?, ?)", (h, body.topic_id, body.text))
-        return {"evidence_hash": h}
-
-    # --- Lore's own agents ---
-    @app.get("/internal/plaintext/{kind}/{iid}")
-    def internal_plaintext(kind: str, iid: int, _=Depends(lore_role), conn=DB):
-        if kind == "node":
-            n = conn.execute("SELECT * FROM nodes WHERE id=? AND storage_root IS NOT NULL", (iid,)).fetchone()
-            if not n:
-                raise HTTPException(404, "no such node")
-            return {"topic_id": n["topic_id"], "ingested": True, "meta_hash": n["meta_hash"],
-                    "synced_block": synced_block(conn), "text": plaintext(n["content_hash"], n["storage_root"])}
-        if kind != "sub":
-            raise HTTPException(404, "kind must be sub or node")
-        s = conn.execute("SELECT * FROM submissions WHERE id=?", (iid,)).fetchone()
-        if not s:
-            raise HTTPException(404, "no such submission (not indexed yet?)")
-        base = {"topic_id": s["topic_id"], "status": s["status"], "synced_block": synced_block(conn)}
-        if not gated(conn, s):  # skipped the gate, someone else's content, or a stale ingest: never decrypted
-            return {**base, "ingested": False, "text": None}
-        return {**base, "ingested": True, "text": plaintext(s["content_hash"], s["storage_root"])}
-
-    @app.get("/internal/candidates/{tid}")
-    def candidates(tid: int, _=Depends(lore_role), conn=DB):
-        nodes = conn.execute("SELECT * FROM nodes WHERE topic_id=? AND storage_root IS NOT NULL", (tid,)).fetchall()
-        pending = [s for s in conn.execute(
-            "SELECT * FROM submissions WHERE topic_id=? AND status IN ('Pending', 'Reported')", (tid,)
-        ).fetchall() if gated(conn, s)]
-        t = conn.execute("SELECT meta_json FROM topics WHERE id=?", (tid,)).fetchone()
-        return {
-            "synced_block": synced_block(conn),
-            "topic": meta(t["meta_json"]) if t else None,
-            "nodes": [{"node_id": n["id"], "meta": meta(n["meta_json"]),
-                       "text": plaintext(n["content_hash"], n["storage_root"])} for n in nodes],
-            "pending": [{"sub_id": s["id"], "text": plaintext(s["content_hash"], s["storage_root"])} for s in pending],
-        }
-
+    app.mount("/", mcp_app)  # last: /mcp and the OAuth routes
     return app

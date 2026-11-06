@@ -3,7 +3,7 @@ import pytest
 
 from gateway.worldid import WorldID, WorldIDError, signal_hash
 
-AGENT = "0xAbCdEf0000000000000000000000000000000001"
+AGENT = "login-0a1b2c3d"  # any signal: a login request id, or a lowercase wallet address
 
 
 def world(handler, seen=None):
@@ -17,7 +17,7 @@ def world(handler, seen=None):
 
 def result(signal=AGENT, action="lore-person", identifiers=("orb",)):
     return {"protocol_version": "4.0", "action": action, "nonce": "n",
-            "responses": [{"identifier": i, "nullifier": "0x1", "proof": ["0x0"] * 5, "signal_hash": signal_hash(signal.lower())}
+            "responses": [{"identifier": i, "nullifier": "0x1", "proof": ["0x0"] * 5, "signal_hash": signal_hash(signal)}
                           for i in identifiers]}
 
 
@@ -34,7 +34,7 @@ def test_valid_proof_returns_the_person_as_bytes32_hex():
 
 def test_a_proof_made_for_another_agent_is_rejected_before_calling_world():
     seen = []
-    with pytest.raises(WorldIDError, match="not made for this agent"):
+    with pytest.raises(WorldIDError, match="not made for this request"):
         world(ok, seen).verify(result(signal="0x" + "9" * 40), AGENT)
     assert seen == []
 
@@ -53,7 +53,7 @@ def test_world_rejecting_the_proof_is_an_error():
 
 
 def test_signal_hash_fits_a_field_element():
-    assert int(signal_hash(AGENT.lower()), 16) < 2 ** 248
+    assert int(signal_hash(AGENT), 16) < 2 ** 248
 
 
 def test_a_credential_outside_the_policy_is_rejected_before_calling_world():

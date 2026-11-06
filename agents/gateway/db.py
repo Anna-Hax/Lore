@@ -22,12 +22,18 @@ CREATE TABLE IF NOT EXISTS ingests     (content_hash TEXT PRIMARY KEY, caller TE
 -- Every watermarked copy handed out: ref is node:<id> (a buyer's node) or sub:<id> (a voter's task).
 CREATE TABLE IF NOT EXISTS deliveries  (topic_id INT, wallet TEXT, ref TEXT, PRIMARY KEY (topic_id, wallet, ref));
 CREATE TABLE IF NOT EXISTS evidence    (hash TEXT PRIMARY KEY, topic_id INT, text TEXT);
-CREATE TABLE IF NOT EXISTS nonces      (message TEXT PRIMARY KEY, address TEXT, expires INT);
-CREATE TABLE IF NOT EXISTS tokens      (token TEXT PRIMARY KEY, address TEXT, expires INT);
+-- Hosted MCP login: OAuth 2.1 with World ID (gateway/oauth.py). person = World ID nullifier.
+CREATE TABLE IF NOT EXISTS oauth_clients (client_id TEXT PRIMARY KEY, info TEXT, created INT);
+CREATE TABLE IF NOT EXISTS oauth_pending (id TEXT PRIMARY KEY, client_id TEXT, params TEXT, expires INT);
+CREATE TABLE IF NOT EXISTS oauth_codes   (code TEXT PRIMARY KEY, data TEXT);
+CREATE TABLE IF NOT EXISTS oauth_tokens  (token TEXT PRIMARY KEY, kind TEXT, client_id TEXT, person TEXT, scopes TEXT,
+                                          expires INT, resource TEXT);
+-- What each person has already been told about (lore_inbox).
+CREATE TABLE IF NOT EXISTS inbox_state   (person TEXT PRIMARY KEY, since_node INT, subs TEXT);
 """
 
 
-SCHEMA_VERSION = 3  # bump whenever a table changes shape
+SCHEMA_VERSION = 5  # bump whenever a table changes shape
 
 
 def bind_deployment(db, deployment: str) -> None:

@@ -39,6 +39,20 @@ class FakeChain:
     def topic_price(self):
         return self.price
 
+    stake_amount, claimable_by_node = 10_000000, {}
+
+    def stake(self):
+        return self.stake_amount
+
+    def claimable(self, node_id):
+        return self.claimable_by_node.get(node_id, 0)
+
+    def address(self, contract):
+        return "0x" + contract.encode().hex()[:40].ljust(40, "0")
+
+    def prepare(self, contract, fn, sender, *args):
+        return {"from": sender, "to": self.address(contract), "description": f"{contract}.{fn}", "args": list(args)}
+
     def person_of(self, addr):
         return self.persons.get(addr.lower())
 

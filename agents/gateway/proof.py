@@ -1,7 +1,7 @@
-"""Re-check a Lore InferenceReceipt on the user's own machine (BUILD_PLAN §2.1, item 5).
+"""Check a Lore InferenceReceipt: the TEE signature, the claimed output, and 0G's on-chain record of the signer.
 
-This never trusts Lore's gateway: it recovers the TEE signer from the signature
-itself and compares it with the signer the provider registered on-chain.
+The receipt, its signature and the provider's on-chain record are all public, so anyone can repeat this check
+with any EIP-191 tool without trusting Lore; the hosted MCP's lore_check_proof runs it for convenience.
 """
 
 import json

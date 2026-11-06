@@ -23,7 +23,8 @@ def hexstr(b) -> str:
 
 
 class Chain:
-    def __init__(self, rpc: str, contracts: dict[str, str], key: str | None = None):
+    def __init__(self, rpc: str, contracts: dict[str, str], key: str | None = None, chain_id: int | None = None):
+        self.chain_id = chain_id
         self.w3 = Web3(Web3.HTTPProvider(rpc))
         self.c = {n: self.w3.eth.contract(address=Web3.to_checksum_address(a), abi=shared.abi(n))
                   for n, a in contracts.items()}
@@ -33,7 +34,7 @@ class Chain:
 
     @classmethod
     def for_chain(cls, chain_id: int, key: str | None = None, rpc: str | None = None) -> "Chain":
-        return cls(rpc or shared.network(chain_id).rpc_url, shared.deployment(chain_id)["contracts"], key)
+        return cls(rpc or shared.network(chain_id).rpc_url, shared.deployment(chain_id)["contracts"], key, chain_id)
 
     @staticmethod
     def _a(addr: str) -> str:
@@ -69,6 +70,21 @@ class Chain:
         """The World ID person (0x-hex nullifier) this agent is linked to, or None."""
         p = bytes(self.c["PersonRegistry"].functions.personOf(self._a(addr)).call())
         return None if p == bytes(32) else hexstr(p)
+
+    def stake(self) -> int:
+        return self.c["Submissions"].functions.stake().call()
+
+    def claimable(self, node_id: int) -> int:
+        return self.c["Royalties"].functions.claimable(node_id).call()
+
+    def address(self, contract: str) -> str:
+        return self.c[contract].address
+
+    def prepare(self, contract: str, fn: str, sender: str, *args) -> dict:
+        """An unsigned transaction for `sender` to sign and send (signing comes with the wallet step)."""
+        return {"chain_id": self.chain_id or self.w3.eth.chain_id, "from": self._a(sender),
+                "to": self.c[contract].address, "value": 0, "data": self.c[contract].encode_abi(fn, args=list(args)),
+                "description": f"{contract}.{fn}"}
 
     def topic_price(self) -> int:
         return self.c["Access"].functions.topicPrice().call()
