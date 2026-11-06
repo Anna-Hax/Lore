@@ -13,7 +13,7 @@ from typing import Callable
 import httpx
 from eth_account import Account
 from eth_account.messages import encode_defunct
-from eth_utils import keccak
+from lore_shared.canonical import canonical_hash
 
 ROUTER = "https://router-api.0g.ai/v1"
 PRIVATE_HEADERS = {"X-0G-Provider-Trust-Mode": "private"}
@@ -32,8 +32,7 @@ class ZGUnavailable(ZGError):
 
 
 def _hash(obj) -> str:
-    # ponytail: swap for lore_shared.canonical_hash once P3 lands it; same canonical form.
-    return "0x" + keccak(json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hex()
+    return canonical_hash(obj)  # P3's canonical JSON; lore-mcp's proof.response_hash computes the same
 
 
 def recover_signer(text: str, signature: str) -> str:

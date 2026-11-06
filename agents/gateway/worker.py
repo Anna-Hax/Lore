@@ -4,7 +4,6 @@ import json
 import logging
 import time
 
-from consts import MIN_LEAK_SCORE_BPS
 from gateway import tasks
 from gateway.db import connect, synced_block
 from gateway.indexer import apply
@@ -46,21 +45,18 @@ def fill_meta(db, storage) -> None:
                 db.execute(f"UPDATE {table} SET meta_json=? WHERE id=? AND meta_hash=?", (raw.decode(), r["id"], r["meta_hash"]))
 
 
-def candidates_for(db, topic_id: int) -> list[tuple[str, int]]:
-    """Every (wallet, mark_id) that got a watermarked copy of this topic's text.
-
-    Buyers x node ids, plus voters x -sub_id (voter copies use negative ids so they never collide with nodes).
-    """
-    buyers = [b[0] for b in db.execute("SELECT wallet FROM deliveries WHERE topic_id=?", (topic_id,))]
-    nodes = [n[0] for n in db.execute("SELECT id FROM nodes WHERE topic_id=?", (topic_id,))]
-    voters = db.execute(
-        "SELECT v.wallet, v.sub_id FROM vote_views v JOIN submissions s ON s.id=v.sub_id WHERE s.topic_id=?", (topic_id,)
-    ).fetchall()
-    return [(w, n) for w in buyers for n in nodes] + [(w, -s) for w, s in voters]
+def candidates_for(db, topic_id: int) -> list[tuple[str, str]]:
+    """Every (wallet, ref) that received a watermarked copy of this topic: buyers' node copies and voters' tasks."""
+    return [(r[0], r[1]) for r in db.execute("SELECT wallet, ref FROM deliveries WHERE topic_id=? ORDER BY wallet, ref",
+                                             (topic_id,))]
 
 
 def match_leaks(db, chain, best_match, tried: set) -> None:
-    """For each unmatched leak report with posted evidence, find the most likely buyer and record it on-chain."""
+    """For each unmatched leak report with posted evidence, find whose copy leaked and record it on-chain.
+
+    best_match (lore_shared.leak) names someone only on an exact watermark match; otherwise it returns
+    (None, None, 0) and the report stays unmatched. Never fall back to a nearby wallet.
+    """
     rows = db.execute(
         "SELECT r.id, r.topic_id, e.text FROM reports r JOIN evidence e ON e.hash=r.evidence_hash"
         " WHERE r.matched_wallet IS NULL"
@@ -72,12 +68,14 @@ def match_leaks(db, chain, best_match, tried: set) -> None:
         candidates = candidates_for(db, r["topic_id"])
         if not candidates:
             continue
-        wallet, score = best_match(r["text"], candidates)
-        if score < MIN_LEAK_SCORE_BPS:  # no real watermark match: never accuse a buyer or voter on-chain
-            log.info("leak report %s: best score %s below %s, not recorded", r["id"], score, MIN_LEAK_SCORE_BPS)
+        wallet, ref, score = best_match(r["text"], candidates)
+        if wallet is None:
+            log.info("leak report %s: no exact watermark match, left unmatched", r["id"])
             continue
         try:
             chain.send("Reports", "recordMatch", r["id"], chain.w3.to_checksum_address(wallet), score)
+            with db:  # off-chain diagnostic: which copy it was
+                db.execute("UPDATE reports SET matched_ref=? WHERE id=?", (ref, r["id"]))
         except Exception as e:
             log.error("recordMatch for report %s failed: %s", r["id"], e)
             tried.discard(r["id"])

@@ -16,18 +16,18 @@ CREATE TABLE IF NOT EXISTS votes       (sub_id INT, voter TEXT, approve INT, per
 CREATE TABLE IF NOT EXISTS persons     (agent TEXT PRIMARY KEY, person TEXT);
 CREATE TABLE IF NOT EXISTS purchases   (topic_id INT, buyer TEXT, PRIMARY KEY (topic_id, buyer));
 CREATE TABLE IF NOT EXISTS reports     (id INT PRIMARY KEY, topic_id INT, reporter TEXT, evidence_hash TEXT,
-                                        matched_wallet TEXT, score_bps INT);
+                                        matched_wallet TEXT, score_bps INT, matched_ref TEXT);
 CREATE TABLE IF NOT EXISTS ingests     (content_hash TEXT PRIMARY KEY, caller TEXT, storage_root TEXT, topic_id INT,
                                         ingested_at INT);
-CREATE TABLE IF NOT EXISTS deliveries  (topic_id INT, wallet TEXT, PRIMARY KEY (topic_id, wallet));
-CREATE TABLE IF NOT EXISTS vote_views  (sub_id INT, wallet TEXT, PRIMARY KEY (sub_id, wallet));
+-- Every watermarked copy handed out: ref is node:<id> (a buyer's node) or sub:<id> (a voter's task).
+CREATE TABLE IF NOT EXISTS deliveries  (topic_id INT, wallet TEXT, ref TEXT, PRIMARY KEY (topic_id, wallet, ref));
 CREATE TABLE IF NOT EXISTS evidence    (hash TEXT PRIMARY KEY, topic_id INT, text TEXT);
 CREATE TABLE IF NOT EXISTS nonces      (message TEXT PRIMARY KEY, address TEXT, expires INT);
 CREATE TABLE IF NOT EXISTS tokens      (token TEXT PRIMARY KEY, address TEXT, expires INT);
 """
 
 
-SCHEMA_VERSION = 2  # bump whenever a table changes shape
+SCHEMA_VERSION = 3  # bump whenever a table changes shape
 
 
 def bind_deployment(db, deployment: str) -> None:

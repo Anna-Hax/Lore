@@ -21,12 +21,12 @@ from gateway.worldid import WorldID
 
 
 def main():
-    # ponytail: P3's libraries; these imports fail until lore_shared exists.
     from lore_shared import crypto, leak, storage, watermark
 
     content = SimpleNamespace(
-        content_hash=crypto.content_hash, encrypt_node=crypto.encrypt_node,
+        content_hash=crypto.content_hash, encrypt_node=lambda text, _content_hash: crypto.encrypt_node(text),
         decrypt_node=crypto.decrypt_node, watermark=watermark.watermark,
+        validate_plaintext=watermark.validate_plaintext,
     )
     chain_id = int(os.environ.get("LORE_CHAIN_ID", 16602))
     dep = shared.deployment(chain_id)

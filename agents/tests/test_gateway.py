@@ -9,7 +9,7 @@ from eth_account.messages import encode_defunct
 from eth_utils import keccak
 from fastapi.testclient import TestClient
 
-from consts import MAX_CHARS
+from lore_shared.constants import MAX_CHARS
 from gateway import tasks, worker
 from gateway.app import create_app
 from gateway.db import connect
@@ -118,9 +118,10 @@ def test_contributor_must_vote_before_submitting(env):
 def test_vote_task_is_watermarked_for_the_voter_and_only_shown_to_eligible_voters(env):
     a, _ = seed(env)
     body = env.client.get("/vote-tasks/2", headers=a).json()
-    assert body["text"] == f"bob follow-up[wm:{ALICE.address.lower()}:-2]"  # voter copies: mark id -sub_id
+    assert body["text"] == f"bob follow-up[wm:{ALICE.address.lower()}:sub:2]"  # voter copies: ref sub:<id>
     assert body["receipts"] == ["0xreceipt"] and [p["node_id"] for p in body["parents_meta"]] == [1]
-    assert env.db.execute("SELECT wallet FROM vote_views WHERE sub_id=2").fetchone()[0] == ALICE.address.lower()
+    assert [tuple(r) for r in env.db.execute("SELECT wallet, ref FROM deliveries WHERE topic_id=1")] == [
+        (ALICE.address.lower(), "sub:2")]
     assert env.client.get("/vote-tasks/2", headers=env.login(CAROL)).status_code == 403
 
 
@@ -161,7 +162,7 @@ def test_reading_needs_access_and_is_watermarked_per_reader(env):
     assert env.client.get("/topics/1/content", headers=carol).status_code == 403
     env.chain.access.add((1, CAROL.address.lower()))
     nodes = env.client.get("/topics/1/content", headers=carol).json()["nodes"]
-    assert nodes[0]["text"] == f"alice research[wm:{CAROL.address.lower()}:1]"
+    assert nodes[0]["text"] == f"alice research[wm:{CAROL.address.lower()}:node:1]"
     assert env.db.execute("SELECT wallet FROM deliveries").fetchone()[0] == CAROL.address.lower()
 
 
@@ -275,12 +276,13 @@ def test_leak_matching_considers_buyers_and_voters(env):
     env.chain.access.add((1, CAROL.address.lower()))
     env.client.get("/topics/1/content", headers=env.login(CAROL))
     env.client.get("/vote-tasks/2", headers=a)
-    assert sorted(worker.candidates_for(env.db, 1)) == sorted([(CAROL.address.lower(), 1), (ALICE.address.lower(), -2)])
+    assert sorted(worker.candidates_for(env.db, 1)) == sorted([(CAROL.address.lower(), "node:1"), (ALICE.address.lower(), "sub:2")])
 
     leaked = env.client.post("/leaks", json={"topic_id": 1, "text": "leaked"}, headers=env.login(BOB)).json()
     env.ev("LeakReported", reportId=7, topicId=1, reporter=BOB.address, evidenceHash=B32(leaked["evidence_hash"]))
-    worker.match_leaks(env.db, env.chain, lambda text, cands: (ALICE.address.lower(), 9000), set())
+    worker.match_leaks(env.db, env.chain, lambda text, cands: (ALICE.address.lower(), "sub:2", 9000), set())
     assert env.chain.sent == [("Reports", "recordMatch", 7, ALICE.address, 9000)]
+    assert env.db.execute("SELECT matched_ref FROM reports WHERE id=7").fetchone()[0] == "sub:2"
 
 
 def test_inbox_returns_vote_tasks_own_submissions_and_new_nodes_in_my_topics(env):
@@ -354,12 +356,12 @@ def test_a_failed_commit_is_an_error_not_a_silent_success(tmp_path, monkeypatch)
     assert client.post("/auth/nonce", json={"address": ALICE.address}).status_code == 500
 
 
-def test_weak_leak_matches_are_never_recorded_on_chain(env):
+def test_no_exact_watermark_match_accuses_nobody(env):
     a, _ = seed(env)
     env.client.get("/vote-tasks/2", headers=a)
     leaked = env.client.post("/leaks", json={"topic_id": 1, "text": "unwatermarked text"}, headers=env.login(BOB)).json()
     env.ev("LeakReported", reportId=8, topicId=1, reporter=BOB.address, evidenceHash=B32(leaked["evidence_hash"]))
-    worker.match_leaks(env.db, env.chain, lambda text, cands: (ALICE.address.lower(), 1200), set())
+    worker.match_leaks(env.db, env.chain, lambda text, cands: (None, None, 0), set())
     assert env.chain.sent == []
 
 
@@ -434,3 +436,22 @@ def test_a_database_from_another_deployment_or_an_older_version_is_refused(tmp_p
     old.commit()
     with pytest.raises(WrongDatabase, match="older version"):
         bind_deployment(connect(str(tmp_path / "old.db")), "16602:0xaaa:1")
+
+
+
+def test_marked_or_reserved_text_is_refused_at_ingest_before_storage(env):
+    r = env.client.post("/ingest", json={"text": "copy\u2063with a mark"}, headers=env.login(ALICE))
+    assert r.status_code == 422 and env.storage.blobs == {}
+
+
+def test_each_node_copy_is_logged_with_its_own_ref(env):
+    seed(env)
+    env.ev("NodeAdded", topicId=1, nodeId=5, contributor=BOB.address, parents=[1])
+    with env.db:
+        env.db.execute("UPDATE nodes SET content_hash=(SELECT content_hash FROM nodes WHERE id=1),"
+                       " storage_root=(SELECT storage_root FROM nodes WHERE id=1) WHERE id=5")
+    env.chain.access.add((1, CAROL.address.lower()))
+    env.client.get("/topics/1/content", headers=env.login(CAROL))
+    env.client.get("/topics/1/content", headers=env.login(CAROL))  # reading again logs nothing new
+    assert [r[0] for r in env.db.execute("SELECT ref FROM deliveries WHERE wallet=? ORDER BY ref",
+                                         (CAROL.address.lower(),))] == ["node:1", "node:5"]

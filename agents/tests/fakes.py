@@ -70,8 +70,12 @@ class FakeContent:
         assert blob.startswith(prefix), "wrong key"
         return blob[len(prefix):].decode()
 
-    def watermark(self, text, wallet, node_id):
-        return f"{text}[wm:{wallet}:{node_id}]"
+    def watermark(self, text, wallet, ref):
+        return f"{text}[wm:{wallet}:{ref}]"
+
+    def validate_plaintext(self, text):
+        if "\u2063" in text or "\u200b" in text or "\u200c" in text:
+            raise ValueError("plaintext contains reserved watermark characters")
 
 
 class FakeStorage:

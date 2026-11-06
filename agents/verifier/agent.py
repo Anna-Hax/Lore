@@ -15,7 +15,7 @@ from pathlib import Path
 
 import zg
 from jobs import NotReady, Skip, loop
-from consts import DUP_SIMILARITY, EDGE_SIMILARITY, MAX_CHARS, MAX_PARENTS, MIN_CHARS
+from lore_shared.constants import DUP_SIMILARITY, EDGE_SIMILARITY, MAX_CHARS, MAX_PARENTS, MIN_CHARS
 from verifier.score import cosine, find_duplicate, length_ok, suggest_parents
 
 PROMPT_VERSION = "verify_v2"

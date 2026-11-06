@@ -8,7 +8,8 @@ lore_shared.storage). The gateway only needs:
     content.content_hash(text) -> "0x.."
     content.encrypt_node(text, content_hash) -> bytes
     content.decrypt_node(blob, content_hash) -> str
-    content.watermark(text, wallet, mark_id) -> str   (mark_id: node id, or -sub_id for a voter's copy)
+    content.watermark(text, wallet, ref) -> str       (ref: "node:<id>" for a buyer, "sub:<id>" for a voter)
+    content.validate_plaintext(text)                  (ValueError: reserved watermark characters, bad UTF-8)
     storage.upload(data: bytes) -> "0x.." root
     storage.download(root) -> bytes
 """
@@ -20,7 +21,7 @@ from eth_utils import keccak
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
-from consts import MAX_CHARS
+from lore_shared.constants import MAX_CHARS
 
 INGEST_TTL = 600  # an ingest must be submitted on-chain within 10 min, so it can't skip votes assigned later
 MAX_LAG = 60      # blocks (~30 s at 0G's ~0.49 s blocks; worker.SYNC_EVERY is 3 s): refuse ingests while the
@@ -147,13 +148,14 @@ def create_app(db_path: str, chain, content, storage, now=lambda: int(time.time(
         report = json.loads(storage.download(s["report_hash"]))
         # Voters get their own watermarked copy, so a leak from a vote task is traceable too. Content that its
         # submitter didn't ingest is never decrypted: it may be someone else's text (see gated()).
-        text = (content.watermark(plaintext(s["content_hash"], s["storage_root"]), addr, -sid)
+        text = (content.watermark(plaintext(s["content_hash"], s["storage_root"]), addr, f"sub:{sid}")
                 if gated(conn, s) else None)
         parents = conn.execute(
             f"SELECT id, meta_json FROM nodes WHERE id IN ({','.join('?' * len(report['parents']))})",
             [p["node_id"] for p in report["parents"]],
         ).fetchall() if report["parents"] else []
-        conn.execute("INSERT OR IGNORE INTO vote_views VALUES (?, ?)", (sid, addr))  # after the slow I/O
+        if text is not None:  # logged before the copy leaves: the request commits before responding
+            conn.execute("INSERT OR IGNORE INTO deliveries VALUES (?, ?, ?)", (s["topic_id"], addr, f"sub:{sid}"))
         return {
             "sub_id": sid, "topic_id": s["topic_id"], "text": text,
             "report": report, "receipts": report.get("receipts", []),
@@ -214,7 +216,13 @@ def create_app(db_path: str, chain, content, storage, now=lambda: int(time.time(
 
     @app.post("/ingest")
     def ingest(body: IngestIn, addr=Depends(caller), conn=DB):
-        if not chain.person_of(addr):  # the contract refuses unregistered submitters anyway; say so before staking
+        try:  # refuse reserved watermark characters (e.g. someone's marked copy) before anything is stored
+            content.validate_plaintext(body.text)
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from e
+        # The contract refuses unregistered submitters anyway; say so before they stake.
+        # (Skipped only when World ID isn't configured, e.g. in library-integration tests.)
+        if world is not None and not chain.person_of(addr):
             raise HTTPException(403, "verify your World ID first (lore_verify_world_id)")
         if chain.latest() - synced_block(conn) > MAX_LAG:
             raise HTTPException(503, "Lore is catching up with the chain; try again in a few seconds")
@@ -242,10 +250,12 @@ def create_app(db_path: str, chain, content, storage, now=lambda: int(time.time(
         out = [{
             "node_id": n["id"], "meta": meta(n["meta_json"]),
             "parents": [e[0] for e in conn.execute("SELECT parent FROM edges WHERE child=?", (n["id"],))],
-            "text": content.watermark(plaintext(n["content_hash"], n["storage_root"]), addr, n["id"]),
+            "text": content.watermark(plaintext(n["content_hash"], n["storage_root"]), addr, f"node:{n['id']}"),
         } for n in nodes]
-        # Write last: the write lock is held only until the request commits, never during downloads.
-        conn.execute("INSERT OR IGNORE INTO deliveries VALUES (?, ?)", (tid, addr))
+        # Write last: the write lock is held only until the request commits (before responding), never during
+        # downloads. One row per (wallet, node copy), so a leak can be traced to the exact copy.
+        conn.executemany("INSERT OR IGNORE INTO deliveries VALUES (?, ?, ?)",
+                         [(tid, addr, f"node:{n['id']}") for n in nodes])
         return {"nodes": out}
 
     @app.post("/leaks")
