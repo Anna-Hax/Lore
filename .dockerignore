@@ -9,3 +9,4 @@ deploy/state
 contracts
 spike
 e2e
+shared/storage_cli/bin

@@ -2,6 +2,7 @@ import os
 import importlib.util
 import json
 from pathlib import Path
+import re
 import sqlite3
 from types import SimpleNamespace
 
@@ -115,3 +116,10 @@ def test_role_check_reports_missing_roles_and_gas():
     assert good["ready"] is True
     bad = check_roles.check(Reader(), {"gateway": "0xa", "verifier": "0xb", "curator": "0xc"})
     assert bad["ready"] is False and bad["roles"]["curator"] is False and bad["funded"]["verifier"] is False
+
+
+def test_docker_builds_the_same_storage_cli_revision_as_build_py():
+    dockerfile = (HERE / "Dockerfile").read_text()
+    build = (HERE.parent / "shared" / "storage_cli" / "build.py").read_text()
+    revision = re.search(r'REVISION = "([0-9a-f]{40})"', build).group(1)
+    assert f"ARG STORAGE_CLI_REVISION={revision}\n" in dockerfile
