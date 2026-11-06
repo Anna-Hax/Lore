@@ -6,8 +6,8 @@ Instructions for any coding agent working in this repo.
 
 Lore is a decentralized marketplace where AI agents sell research to each other. Each topic is a commit graph of encrypted research nodes.
 - **On 0G:** the contracts run on 0G Chain, the encrypted content lives on 0G Storage, and every model call goes through 0G Compute as a verified, private run with a stored proof.
-- **On users' machines:** users run their own local agents, plus our `lore-mcp`.
-- **On our own host:** Lore's agents (gateway, verifier and curator).
+- **On our own host:** Lore's agents: the gateway (which is also the hosted MCP server users connect to), the verifier and the curator.
+- **Users** connect their own MCP clients to the hosted MCP server and log in with World ID. There is no other login.
 
 - **`BUILD_PLAN.md` is the source of truth.** Read it fully before starting. Section 0 says who owns what, and section 3 holds the frozen interfaces.
 - Product spec: https://claude.ai/artifact/KvzhXcdgHuhuBvokj7iKbf
@@ -19,7 +19,7 @@ Work only inside the paths your person owns (`BUILD_PLAN.md` section 0). Changin
 
 | Person | Paths |
 |---|---|
-| P1 (agents) | `agents/*`, `lore-mcp/` |
+| P1 (agents) | `agents/*` |
 | P2 (contracts) | `contracts/`, `shared/lore_shared/{abi,deployments,network.py}` |
 | P3 (platform) | `spike/`, `deploy/`, `e2e/`, the rest of `shared/` |
 
@@ -29,14 +29,14 @@ Work only inside the paths your person owns (`BUILD_PLAN.md` section 0). Changin
 - **Off-chain:** Python 3.12 in a `uv` workspace, tested with `pytest`.
 - **Chain:** `web3.py` v7 and `eth-account`.
 - **Gateway API:** FastAPI.
-- **MCP:** the official `mcp` Python SDK (FastMCP, stdio).
+- **MCP:** the official `mcp` Python SDK (`MCPServer`, streamable HTTP, OAuth 2.1 with World ID login), hosted inside the gateway.
 - **Models:** the 0G Compute Router via the `openai` client, used only through `agents/zg` (`BUILD_PLAN.md` section 2.1).
 
 ## Rules
 
 - **Never return plaintext content** from any endpoint unless the on-chain access, vote-eligibility or role check has passed. Every endpoint that returns content has a test proving the check is there.
 - **Every model call goes through `agents/zg`,** in private mode with `verify_tee: true`, and its receipt is verified and stored. Never fall back to a lower trust tier, and never send submission or node text outside 0G private mode.
-- **Secrets** (`MASTER_KEY`, `WM_SECRET`, wallet keys, API keys) live only in the host's secret store or a local `.env`. Never commit them, print them or log them. Users' keys never leave their machines.
+- **Secrets** (`MASTER_KEY`, `WM_SECRET`, wallet keys, API keys) live only in the host's secret store or a local `.env`. Never commit them, print them or log them. How users' transactions get signed (a password manager) is still being designed: don't build signing until it is.
 - **Don't invent network values.** RPC URLs, chain IDs and storage endpoints come from the official 0G docs and go in `shared/lore_shared/network.py`.
 - **Keep it lean.** Don't add a framework, abstraction, dependency or service that the plan doesn't call for. If something seems missing, ask instead of building it.
 - **Leave one runnable check behind** for any non-trivial logic: a Foundry test for contracts, and a `pytest` test for Python.

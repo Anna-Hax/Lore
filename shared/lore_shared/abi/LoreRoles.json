@@ -69,6 +69,19 @@
   },
   {
     "type": "function",
+    "name": "REGISTRAR_ROLE",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "VERIFIER_ROLE",
     "inputs": [],
     "outputs": [
@@ -182,6 +195,25 @@
   {
     "type": "function",
     "name": "isLeakDetector",
+    "inputs": [
+      {
+        "name": "a",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "isRegistrar",
     "inputs": [
       {
         "name": "a",

@@ -27,7 +27,7 @@ def collect() -> dict:
         "team_files_present": {
             "network_config": (REPO / "shared/lore_shared/network.py").is_file(),
             "zg_client": (REPO / "agents/zg").is_dir(),
-            "local_mcp": (REPO / "lore-mcp").is_dir(),
+            "hosted_mcp": (REPO / "agents/gateway/mcp_server.py").is_file(),
         },
     }
 

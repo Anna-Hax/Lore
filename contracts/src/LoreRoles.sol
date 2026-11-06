@@ -5,12 +5,14 @@ import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 
 /// @notice Single source of roles for every Lore contract.
 /// @dev ADMIN is OZ's DEFAULT_ADMIN_ROLE, so it can grant and revoke every other role.
-///      TREASURY is an address, not a role: it receives fees, slashes and the platform cut.
+///      TREASURY is an address, not a role: it receives fees, rejected stakes and the platform cut.
 contract LoreRoles is AccessControl {
     bytes32 public constant ADMIN_ROLE = DEFAULT_ADMIN_ROLE;
     bytes32 public constant VERIFIER_ROLE = keccak256("VERIFIER");
     bytes32 public constant CURATOR_ROLE = keccak256("CURATOR");
     bytes32 public constant LEAK_DETECTOR_ROLE = keccak256("LEAK_DETECTOR");
+    /// @notice The gateway: records agent -> person after checking a World ID proof.
+    bytes32 public constant REGISTRAR_ROLE = keccak256("REGISTRAR");
 
     address public treasury;
 
@@ -45,5 +47,9 @@ contract LoreRoles is AccessControl {
 
     function isLeakDetector(address a) external view returns (bool) {
         return hasRole(LEAK_DETECTOR_ROLE, a);
+    }
+
+    function isRegistrar(address a) external view returns (bool) {
+        return hasRole(REGISTRAR_ROLE, a);
     }
 }

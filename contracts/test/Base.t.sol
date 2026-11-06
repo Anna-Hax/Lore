@@ -9,6 +9,7 @@ import {Submissions} from "../src/Submissions.sol";
 import {Access} from "../src/Access.sol";
 import {Royalties} from "../src/Royalties.sol";
 import {Reports} from "../src/Reports.sol";
+import {PersonRegistry} from "../src/PersonRegistry.sol";
 import {ISubmissions} from "../src/interfaces/ILore.sol";
 import {Constants} from "../src/Constants.sol";
 
@@ -21,12 +22,14 @@ abstract contract Base is Test {
     Access access;
     Royalties royalties;
     Reports reports;
+    PersonRegistry registry;
 
     address admin = address(this);
     address treasury = makeAddr("treasury");
     address verifier = makeAddr("verifier");
     address curator = makeAddr("curator");
     address detector = makeAddr("detector");
+    address registrar = makeAddr("registrar");
 
     uint256 constant STAKE = Constants.STAKE;
     uint256 constant FEE = Constants.STAKE_FEE;
@@ -44,13 +47,16 @@ abstract contract Base is Test {
         subs = new Submissions(roles, usdc, graph);
         access = new Access(roles, usdc, graph, royalties);
         reports = new Reports(roles, graph);
+        registry = new PersonRegistry(roles);
 
         graph.setSubmissions(address(subs));
         graph.setRoyalties(address(royalties));
+        graph.setRegistry(address(registry));
         royalties.setAccess(address(access));
         roles.grantRole(roles.VERIFIER_ROLE(), verifier);
         roles.grantRole(roles.CURATOR_ROLE(), curator);
         roles.grantRole(roles.LEAK_DETECTOR_ROLE(), detector);
+        roles.grantRole(roles.REGISTRAR_ROLE(), registrar);
     }
 
     // ---------- helpers ----------
@@ -63,12 +69,28 @@ abstract contract Base is Test {
         vm.stopPrank();
     }
 
+    /// @dev Unless already registered, `who` becomes its own person: one agent per person by default.
+    function _ensurePerson(address who) internal {
+        if (registry.personOf(who) == bytes32(0)) _link(who, _personId(who));
+    }
+
+    function _personId(address who) internal pure returns (bytes32) {
+        return keccak256(abi.encode("person", who));
+    }
+
+    /// @dev Register `agent` to `person` (a second agent of an existing person, for example).
+    function _link(address agent, bytes32 person) internal {
+        vm.prank(registrar);
+        registry.register(agent, person);
+    }
+
     function _hash() internal returns (bytes32) {
         return keccak256(abi.encode("content", ++_salt));
     }
 
     function _submit(address who, uint256 topicId) internal returns (uint256 subId) {
         if (usdc.balanceOf(who) < STAKE) _fund(who, STAKE * 10);
+        _ensurePerson(who);
         vm.prank(who);
         subId = subs.submit(topicId, _hash(), keccak256("root"));
     }

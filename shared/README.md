@@ -1,7 +1,7 @@
 # lore-shared
 
-P3's Python 3.12 package for P1's hosted gateway. User agents and `lore-mcp`
-run locally; they must never receive `MASTER_KEY` or `WM_SECRET`.
+P3's Python 3.12 package for P1's hosted gateway, which is also the MCP server users connect to.
+Users' agents never receive `MASTER_KEY` or `WM_SECRET`.
 
 From the repository root, with `uv` installed:
 

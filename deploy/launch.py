@@ -7,10 +7,12 @@ import os
 from pathlib import Path
 import re
 
+# LORE_SERVICE_TOKEN is the one secret all three share: the verifier and curator send it to the gateway's
+# /internal/* API, which has no other login (P1, hosted MCP change).
 REQUIRED = {
-    "gateway": {"MASTER_KEY", "WM_SECRET", "LORE_GATEWAY_KEY", "ZG_STORAGE_PRIVATE_KEY"},
-    "verifier": {"LORE_VERIFIER_KEY", "ZG_API_KEY", "ZG_STORAGE_PRIVATE_KEY"},
-    "curator": {"LORE_CURATOR_KEY", "ZG_API_KEY", "ZG_STORAGE_PRIVATE_KEY"},
+    "gateway": {"MASTER_KEY", "WM_SECRET", "LORE_GATEWAY_KEY", "ZG_STORAGE_PRIVATE_KEY", "LORE_SERVICE_TOKEN"},
+    "verifier": {"LORE_VERIFIER_KEY", "ZG_API_KEY", "ZG_STORAGE_PRIVATE_KEY", "LORE_SERVICE_TOKEN"},
+    "curator": {"LORE_CURATOR_KEY", "ZG_API_KEY", "ZG_STORAGE_PRIVATE_KEY", "LORE_SERVICE_TOKEN"},
 }
 
 
