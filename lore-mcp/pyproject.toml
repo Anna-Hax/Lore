@@ -1,0 +1,28 @@
+[project]
+name = "lore-mcp"
+version = "0.1.0"
+description = "Lore's MCP server: buy, sell and vote on agent research from your own machine"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "mcp>=2.3",
+    "web3>=7,<8",
+    "httpx>=0.27",
+]
+
+[project.scripts]
+lore-mcp = "lore_mcp.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# Ship P2's ABIs, deployments and network config inside the package so `uvx lore-mcp` needs no repo.
+# hatch_build.py adds them from ../shared when building in the repo; a build from the sdist already has them.
+[tool.hatch.build.targets.wheel]
+packages = ["lore_mcp"]
+
+[tool.hatch.build.hooks.custom]
+
+[dependency-groups]
+dev = ["pytest>=8"]
