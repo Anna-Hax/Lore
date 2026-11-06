@@ -6,6 +6,22 @@ Audience: the coding agents (and their humans) building Lore v1. Read this whole
 
 ---
 
+## 0. Team split (3 people)
+
+| Person | Role | Owns | Paths |
+|---|---|---|---|
+| **P1** | Agent developer | B (gateway: MCP server, queue, indexer, finalizer, `lore-skill`) and D (verifier and curator agents) | `agents/*`, `packages/lore-skill/` |
+| **P2** | Blockchain developer | A (all contracts, tests, deploy script, ABI export, testnet deploys, network config) | `contracts/`, `packages/shared/src/{abi,deployments,network.js}` |
+| **P3** | Platform and integration | S (Launchpad spike), C libraries (crypto, watermark, leak scoring), `packages/shared` scaffold and types, Launchpad deployment of all agents, E (end-to-end) | `spike/`, `packages/shared/src/{crypto,watermark,leak,types,constants,canonical}.js`, `e2e/` |
+
+Handoffs:
+- **P2 → P1, P3:** ABIs and deployment addresses in `packages/shared`. Use the local anvil deploy until testnet is ready.
+- **P3 → P1:** two pure, tested libraries. The first is `crypto.js` and `watermark.js`. The second is `leak.js`, which provides `bestMatch(text, candidates) → {wallet, scoreBps}`. P1 wires them into the gateway's MCP tools; P3 never edits `agents/*`.
+- **P3 → everyone:** spike findings. They decide how P1 packages the agents and where their state lives.
+- **Section 3 (frozen interfaces):** a change needs approval from all three.
+
+---
+
 ## 1. Product rules (the parts you need to code against)
 
 - **Topic:** one commit graph, which is a DAG of nodes. A node can have 0..n parents, and a topic can have several top-level nodes.
@@ -48,25 +64,25 @@ Each agent watches the chain for its own events, so no agent calls another over 
 
 ```
 lore/
-  contracts/            # Foundry project            (Workstream A)
-  packages/shared/      # ABIs, types, constants, crypto, watermark (owned by B, all contribute)
-  agents/gateway/       # MCP + queue + indexer + finalizer + delivery (Workstreams B, C)
-  agents/verifier/      # verifier agent             (Workstream D)
-  agents/curator/       # curator agent              (Workstream D)
-  packages/lore-skill/  # what a user's Launchpad agent installs to use Lore (Workstream B)
-  spike/                # Launchpad feasibility checks (Workstream S)
-  e2e/                  # end-to-end script          (Workstream E)
+  contracts/            # Foundry project                                  (P2)
+  packages/shared/      # ABIs + deployments (P2); types, constants, crypto, watermark, leak (P3)
+  agents/gateway/       # MCP + queue + indexer + finalizer + content tools (P1)
+  agents/verifier/      # verifier agent                                   (P1)
+  agents/curator/       # curator agent                                    (P1)
+  packages/lore-skill/  # what a user's Launchpad agent installs to use Lore (P1)
+  spike/                # Launchpad feasibility checks                     (P3)
+  e2e/                  # end-to-end scenario                              (P3)
 ```
 
 Each `agents/*` folder is packaged in whatever form the Launchpad deploys. That is probably an OpenClaw agent with our JS as its tools or plugins; spike S confirms it.
 
-**TODO before M0 (assigned to the integration lead):** take the 0G testnet RPC URL, chain ID, 0G Storage indexer URL and faucet from the official 0G docs, and put them in `packages/shared/src/network.js`. Do not guess them.
+**TODO before M0 (P2):** take the 0G testnet RPC URL, chain ID, 0G Storage indexer URL and faucet from the official 0G docs, and put them in `packages/shared/src/network.js`. Do not guess them.
 
 ---
 
 ## 3. Frozen interfaces (M0 — agree on these before parallel work starts)
 
-Any change to this section needs a PR that every workstream lead approves.
+Any change to this section needs a PR approved by P1, P2 and P3.
 
 ### 3.1 Constants (`packages/shared/src/constants.js`, mirrored in `contracts/src/Constants.sol`)
 
@@ -196,7 +212,7 @@ All JSON is stored on 0G Storage. Its on-chain hash is `keccak256` of the canoni
 /** @typedef {{topicId:string, title:string, description:string, nodeCount:number, model:string, createdAt:string}} TopicMeta */
 ```
 
-**Content encryption (owned by C, lives in `packages/shared/src/crypto.js`):**
+**Content encryption (owned by P3, lives in `packages/shared/src/crypto.js`):**
 - Encryption is AES-256-GCM. Each node has its own key: `HKDF(MASTER_KEY, "lore-node:" + contentHash)`.
 - The blob on 0G Storage is `iv || ciphertext || tag`.
 - `MASTER_KEY` exists only in the gateway agent's secrets. No other agent holds it. This means the key lives on 0G's infrastructure; that is accepted for v1.
@@ -236,7 +252,7 @@ Callers authenticate once per session by signing a nonce, SIWE-style; the recove
 
 Each workstream depends only on section 3. Use mocks for anything another workstream hasn't delivered yet.
 
-### A — Contracts (`contracts/`)
+### A — Contracts (`contracts/`) · owner: P2
 1. `MockUSDC`, `LoreRoles`, `Constants.sol`.
 2. `TopicGraph`, `Submissions`, `Access`, `Royalties` and `Reports`, implemented exactly as specified in section 3.2.
 3. Foundry tests. At minimum:
@@ -253,7 +269,7 @@ Each workstream depends only on section 3. Use mocks for anything another workst
 
 **Done when** `forge test` passes and the contracts are deployed to the 0G testnet with addresses committed.
 
-### S — Launchpad feasibility spike (do this first, it blocks B, C and D)
+### S — Launchpad feasibility spike · owner: P3 (do this first, it blocks B and D)
 Deploy a throwaway agent on the Launchpad and answer each question below with evidence: a link, a screenshot or a log. Write the answers to `spike/FINDINGS.md`.
 1. Can it run **our own JS code** (as an OpenClaw tool or plugin, or otherwise), not just a stock agent?
 2. Can it **expose an MCP endpoint** that other agents can reach (this is the gateway)? Can its agents **call an external MCP endpoint** (this is every user agent and our verifier and curator)?
@@ -263,9 +279,9 @@ Deploy a throwaway agent on the Launchpad and answer each question below with ev
 6. Which **models** (LLM and embedding) does 0G Compute give a Launchpad agent?
 7. Does each Launchpad agent have an **on-chain identity** (for example an INFT or an agent registry entry) that a contract or the gateway can check? We need this to enforce "user agents must run on the Launchpad".
 
-If any of 1–4 is "no", **stop and escalate to the team lead.** Don't quietly add a server. Questions 5–7 have fallbacks: 0G Storage KV for 5, the Claude API for 6, and not enforcing the rule in v1 for 7.
+If any of 1–4 is "no", **stop and escalate to the whole team.** Don't quietly add a server. Questions 5–7 have fallbacks: 0G Storage KV for 5, the Claude API for 6, and not enforcing the rule in v1 for 7.
 
-### B — Gateway agent: MCP, queue, indexer (`agents/gateway/`, `packages/lore-skill/`)
+### B — Gateway agent: MCP, queue, indexer (`agents/gateway/`, `packages/lore-skill/`) · owner: P1
 1. **Indexer:** use ethers to backfill with `contract.queryFilter` from the deploy block, then poll new blocks for every event in section 3.2. Store them in the tables `topics`, `nodes`, `edges`, `submissions`, `votes`, `purchases`, `reports`, using whatever storage spike S picked. Handling the same event twice must not change anything.
 2. **Finalizer:** every minute, call `finalize` on each submission that is eligible (window over, or the outcome can't change). The gateway's own wallet pays the gas.
 3. **Metadata cache:** on `NodeMetaSet` and `TopicMetaSet`, fetch the JSON from 0G Storage, check it against the on-chain hash, and cache it.
@@ -274,9 +290,9 @@ If any of 1–4 is "no", **stop and escalate to the team lead.** Don't quietly a
 
 **Done when** a Launchpad test agent using only `lore-skill` can complete the full loop against the deployed contracts (with C and D mocked as needed).
 
-### C — Content: crypto, watermarking, delivery (`packages/shared/src/{crypto,watermark}.js`, delivery tools inside `agents/gateway/`)
-1. `crypto.js`: `encryptNode`, `decryptNode`, `contentHash`. Include a round-trip test.
-2. Watermark v1. It is deterministic, so no per-delivery seed needs to be stored.
+### C — Content: crypto, watermarking, leak tracing · libraries: P3, wiring into the gateway: P1
+1. **(P3)** `crypto.js`: `encryptNode`, `decryptNode`, `contentHash`. Include a round-trip test.
+2. **(P3)** `watermark.js`, watermark v1. It is deterministic, so no per-delivery seed needs to be stored.
    - The only marking is zero-width characters. The first 8 bytes of `HMAC(WM_SECRET, wallet || nodeId)` are encoded as zero-width characters and repeated after every sentence end, so a partial excerpt can still be matched. The visible text is unchanged.
    - `watermark(text, wallet, nodeId)` and `score(leakedText, wallet, nodeId) → 0..10000`, where the score is the fraction of decoded bits that match.
    - Tests:
@@ -285,14 +301,15 @@ If any of 1–4 is "no", **stop and escalate to the team lead.** Don't quietly a
      - The visible text is identical to the input.
      - A 3-sentence excerpt still scores highest for the correct wallet.
    - Known limitation: stripping zero-width characters removes the mark. That is accepted for v1; stronger watermarks are v2.
-3. The gateway's content tools: `lore_submit` (encrypt and upload), `lore_read_topic`, `lore_get_vote_task`, `lore_internal_*`, and the leak lookup.
+3. **(P3)** `leak.js`: `bestMatch(text, candidates)`, which returns the highest-scoring wallet using `score()`. Test it with a planted leak and at least 50 decoy wallets.
+4. **(P1)** The gateway's content tools: `lore_submit` (encrypt and upload), `lore_read_topic`, `lore_get_vote_task`, `lore_internal_*`, and the leak lookup.
    - Every call checks access, eligibility or role on-chain at request time. Do not cache those checks.
-   - The leak lookup runs when `LeakReported` is indexed. It scores the text against every wallet that bought the topic and calls `recordMatch` with the best one.
-4. Record each `(wallet, topicId)` delivery. That list is the candidate set for the leak lookup.
+   - The leak lookup runs when `LeakReported` is indexed. It calls `bestMatch` against every wallet that bought the topic, then calls `recordMatch` with the result.
+5. **(P1)** Record each `(wallet, topicId)` delivery. That list is the candidate set for the leak lookup.
 
 **Done when** the tools pass integration tests against the testnet contracts and a planted leak is traced back to the correct wallet.
 
-### D — Verifier and curator agents (`agents/verifier/`, `agents/curator/`)
+### D — Verifier and curator agents (`agents/verifier/`, `agents/curator/`) · owner: P1
 
 **Verifier, which runs on every `Submitted` event it sees on-chain:**
 1. Load the submission through `lore_internal_plaintext`, and the topic's accepted nodes and earlier pending submissions through `lore_internal_candidates`.
@@ -319,7 +336,12 @@ Both agents keep their prompts in versioned files (`prompts/v1.md`) and record `
 - An off-topic text is rejected.
 - A valid follow-up gets the correct parent.
 
-### E — Integration and end-to-end (`e2e/`)
+### F — Launchpad deployment · owner: P3
+1. Package the gateway, verifier and curator (built by P1) in the form spike S found, and deploy them to the Launchpad.
+2. Generate the role wallets, store every secret in Launchpad secrets, and have P2 grant the on-chain roles.
+3. Write a short runbook in `spike/DEPLOY.md` covering redeploying, rotating secrets and reading logs.
+
+### E — Integration and end-to-end (`e2e/`) · owner: P3
 Three test agents, deployed on the Launchpad with `lore-skill` and funded with MockUSDC, run this scenario through MCP only. `e2e/run.js` coordinates the scenario and asserts the results.
 1. Agent 1 creates a new topic, which the verifier accepts. Agent 1 is now a contributor.
 2. Agent 2 buys the topic and reads it. Agent 1 claims royalties.
@@ -333,15 +355,15 @@ Three test agents, deployed on the Launchpad with `lore-skill` and funded with M
 
 ## 5. Milestones and dependencies
 
-| Milestone | Contents | Depends on |
-|---|---|---|
-| **M0** | Spike S answered; section 3 frozen; `packages/shared` scaffolded with types, constants and network config | — |
-| **M1** | A: contracts tested and deployed to testnet | M0 |
-| **M2** (parallel with M1, using a local anvil deployment) | B: gateway and `lore-skill`; C: crypto, watermark, content tools; D: verifier and curator with fixtures | M0 |
-| **M3** | Gateway, verifier and curator deployed on the Launchpad and pointed at testnet | M1, M2 |
-| **M4** | `e2e/run.js` passes on testnet twice in a row from a fresh deploy | M3 |
+| Milestone | P1 (agents) | P2 (contracts) | P3 (platform) | Depends on |
+|---|---|---|---|---|
+| **M0** | Reviews section 3 | Network config; reviews section 3 | Spike S answered; `packages/shared` scaffolded | — |
+| **M1** | — | A: contracts tested and deployed to testnet | — | M0 |
+| **M2** (parallel with M1, on local anvil) | B gateway and `lore-skill`; D verifier and curator with fixtures; content tools wired | Supports P1 and P3 against anvil | C libraries (crypto, watermark, leak) tested | M0 |
+| **M3** | Fixes deployment issues | Grants roles on testnet | F: all three agents deployed on the Launchpad, pointed at testnet | M1, M2 |
+| **M4** | Fixes bugs found | Fixes bugs found | E: `e2e/run.js` passes on testnet twice in a row from a fresh deploy | M3 |
 
-Until M1 lands, B, C and D develop locally against an anvil chain using `forge script Deploy`, and deploy to the Launchpad only at M3.
+Until M1 lands, P1 and P3 develop locally against an anvil chain using `forge script Deploy`, and deploy to the Launchpad only at M3.
 
 ---
 
@@ -349,7 +371,7 @@ Until M1 lands, B, C and D develop locally against an anvil chain using `forge s
 - Conventional Commits. One unit of work per commit.
 - Secrets (`MASTER_KEY`, `WM_SECRET`, role wallet keys, any LLM API key) go only in Launchpad agent secrets, or a local `.env` during development. Never commit them or log them.
 - No MCP tool returns plaintext unless the access or vote-eligibility check has passed. **This is the core security property of v1. Every tool that returns content needs a test asserting the check is there.**
-- Keep it lean. Don't add a framework, abstraction or service that this plan doesn't call for. If you think something is missing, raise it with the team lead instead of building it.
+- Keep it lean. Don't add a framework, abstraction or service that this plan doesn't call for. If you think something is missing, raise it with the other two instead of building it.
 
 ## 7. Open items (decide before M3; placeholders are fine until then)
 - Final economic values in section 3.1.
