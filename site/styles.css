@@ -224,7 +224,6 @@ a:focus-visible{outline:2px solid #fff;outline-offset:3px;border-radius:6px}
 }
 .chip .dot{width:7px;height:7px;border-radius:2px;background:var(--red);box-shadow:0 0 10px var(--red);transform:rotate(45deg)}
 .chip:hover{color:#fff;text-shadow:0 0 18px var(--red-glow)}
-.chip.hot{color:#fff;background:rgba(255,46,31,.1);border:1px solid rgba(255,46,31,.35);box-shadow:0 0 26px rgba(255,46,31,.18)}
 
 /* ---------- sections ---------- */
 section{position:relative;z-index:6;padding:clamp(80px,12vh,140px) clamp(20px,5vw,64px)}

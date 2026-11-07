@@ -110,7 +110,9 @@
     Object.fromEntries(Object.entries((state.data && state.data.params) || {}).filter(([, v]) => isNum(v))));
 
   // A topic costs node_value x its nodes (Access.priceOf); the API sends it as `price` when live.
-  const topicPrice = (t) => (t && isNum(t.price)) ? t.price : P().node_value * ((t && t.node_count) || 0);
+  const topicPrice = (t) => (t && isNum(t.price)) ? t.price
+    : state.source === 'snapshot' && isNum(state.data.params.topic_price) ? state.data.params.topic_price
+    : P().node_value * ((t && t.node_count) || 0);
 
   function normalize(d) {
     d = d && typeof d === 'object' ? d : {};
@@ -121,7 +123,7 @@
       stats: d.stats && typeof d.stats === 'object' ? d.stats : {},
       topics: arr(d.topics), nodes: arr(d.nodes).map((n) => ({ ...n, parents: Array.isArray(n.parents) ? n.parents : [] })),
       submissions: arr(d.submissions).map((s) => ({ ...s, parents: Array.isArray(s.parents) ? s.parents : [] })),
-      reports: arr(d.reports),
+      reports: arr(d.reports), checkpoints: arr(d.checkpoints),
     };
   }
   const topicById = (id) => state.data.topics.find((t) => t.topic_id === id);
@@ -153,14 +155,19 @@
     let res = null, source = null;
     if (state.api) {
       try { res = await fetchJson(`${state.api}/api/overview`, 30000); source = 'live'; }
-      catch (e) { if (!first && state.source === 'live') return; /* keep showing last live data on a blip */ }
+      catch (e) {
+        if (!first && state.source === 'live') {
+          setSource('err', 'Connection lost · showing last update', 'Retrying every 20 seconds.');
+          return;
+        }
+      }
     }
     if (!res && (first || state.source !== 'snapshot')) {
       try { res = await fetchJson('data/snapshot.json', 8000); source = 'snapshot'; }
       catch (e) { if (first) return showError(); return; }
     }
     if (!res) return;
-    if (res.text === state.raw && source === state.source) return; // nothing changed
+    if (res.text === state.raw && source === state.source) { renderHeader(); return; }
     state.raw = res.text; state.source = source;
     state.data = normalize(res.json);
     renderAll();
@@ -177,8 +184,9 @@
     if (title) pill.title = title; else pill.removeAttribute('title');
   }
 
-  /* ================= render: header + stats ================= */
+  /* ================= render: header + recent activity ================= */
   function renderHeader() {
+    $('archiveNotice').hidden = state.source !== 'snapshot';
     const c = state.data.chain;
     const name = typeof c.name === 'string' && c.name ? c.name.replace(/\s*Testnet$/i, '') : '0G Galileo';
     $('netText').textContent = `${name}${isNum(c.chain_id) ? ` · ${c.chain_id}` : ''}`;
@@ -187,33 +195,17 @@
       `Saved snapshot from ${fmtDate(state.data.generated_at)}. The page shows live data when the gateway serves it.`);
   }
 
-  function renderStats() {
-    const d = state.data, st = d.stats;
-    const v = (k, fb) => (isNum(st[k]) ? st[k] : fb());
-    const subs = d.submissions;
-    const acc = v('accepted', () => subs.filter((s) => s.status === 'Accepted').length);
-    const rej = v('rejected', () => subs.filter((s) => s.status === 'Rejected').length);
-    const rev = v('in_review', () => subs.filter((s) => s.status === 'Pending' || s.status === 'Reported').length);
-    const total = v('submissions', () => subs.length);
-    const leaks = v('leak_reports', () => d.reports.length);
-    const traced = v('leaks_traced', () => d.reports.filter((r) => r.matched).length);
-    const tile = (k, val, unit, sub, extra, wide) => h('li', { class: `stat${wide ? ' wide' : ''}` },
-      h('div', { class: 'k' }, k), h('div', { class: 'v' }, val, unit ? h('small', {}, unit) : null), sub ? h('div', { class: 'note-s' }, sub) : null, extra);
-    const sum = Math.max(1, acc + rej + rev);
-    const split = h('div', {},
-      h('div', { class: 'splitbar', 'aria-hidden': 'true' },
-        h('i', { class: 'a', style: `width:${(acc / sum) * 100}%` }), h('i', { class: 'r', style: `width:${(rej / sum) * 100}%` }), h('i', { class: 'p', style: `width:${(rev / sum) * 100}%` })),
-      h('div', { class: 'split-legend' }, h('span', {}, h('b', {}, fmtInt(acc)), ' accepted'), h('span', {}, h('b', {}, fmtInt(rej)), ' rejected'), h('span', {}, h('b', {}, fmtInt(rev)), ' in review')));
-    add(clear($('stats')), [
-      tile('Topics', fmtInt(v('topics', () => d.topics.length))),
-      tile('Nodes', fmtInt(v('nodes', () => d.nodes.length))),
-      tile('People', fmtInt(st.people), null, 'one World ID each'),
-      tile('Submissions', fmtInt(total), null, null, split, true),
-      tile('Purchases', fmtInt(st.purchases), null, 'soulbound passes'),
-      tile('Volume', usdc(st.volume_usdc), 'USDC'),
-      tile('Royalties', usdc(st.royalties_usdc), 'USDC', 'to contributors'),
-      tile('Leaks traced', fmtInt(traced), `/ ${fmtInt(leaks)} reports`, 'leaked copies matched to a wallet', null, true),
-    ]);
+  function renderPulse() {
+    const rail = clear($('signalRail'));
+    const latest = state.data.submissions.reduce((best, s) =>
+      isNum(s.sub_id) && (!best || s.sub_id > best.sub_id) ? s : best, null);
+    rail.append(h('span', { class: 'signal-glyph', 'aria-hidden': 'true' }));
+    rail.append(h('span', { class: 'signal-label' }, state.source === 'live' ? 'NETWORK ACTIVITY' : 'ARCHIVED ACTIVITY'));
+    if (latest) {
+      rail.append(h('span', { class: 'signal-copy' },
+        `Submission #${latest.sub_id} · ${latest.status || 'Pending'} · ${topicTitle(latest.topic_id)}`));
+      rail.append(h('button', { type: 'button', class: 'signal-link', onclick: () => showSubmission(latest.sub_id) }, 'Inspect →'));
+    } else rail.append(h('span', { class: 'signal-copy' }, 'No submissions indexed yet.'));
   }
 
   function renderSteps() {
@@ -225,7 +217,7 @@
       ['node', 'Node', `Accepted: stake back minus ${usdc(p.stake_fee)} USDC and the node joins the graph. Rejected: the stake goes to the treasury.`, 'TopicGraph'],
       ['cart', 'Buy', `A topic costs ${usdc(p.node_value)} USDC per node (about the model tokens you save by not redoing it) and buys a soulbound ERC-1155 pass: the whole topic, permanently, including future nodes.`, 'Access'],
       ['coins', 'Royalties', `${pctBps(10000 - p.platform_cut_bps)} of every sale is split equally across the topic's nodes, so each node earns ${usdc(p.node_value * (10000 - p.platform_cut_bps) / 10000)} USDC per buyer, claimable on-chain.`, 'Royalties'],
-      ['search', 'Trace leaks', 'Every copy is invisibly watermarked to the reader\'s wallet. A proven leak is traced deterministically and the leaker is removed from Lore.', 'Reports'],
+      ['search', 'Trace leaks', 'Every copy is invisibly watermarked to the reader\'s wallet. Matches are recorded on-chain; person-wide bans are a separate action.', 'Reports'],
     ];
     add(clear($('steps')), steps.map(([ic, t, body, where]) =>
       h('li', { class: 'step' }, h('h3', {}, icon(ic, 16), t), h('p', {}, body), h('span', { class: 'where' }, where))));
@@ -262,7 +254,9 @@
         h('dt', {}, 'Private'), h('dd', {}, proof.private === true ? 'Yes, 0G Compute private mode' : proof.private === false ? 'No' : '—'),
         h('dt', {}, 'Receipt'), h('dd', {}, rootOk ? h('span', {}, h('span', { class: 'mono', title: proof.root }, short(proof.root)), ' ', copyBtn(proof.root, 'Copy receipt root', true), h('span', { class: 'muted' }, ' 0G Storage root')) : '—'),
       ));
-      body.append(h('p', { class: 'p-hint' }, 'Check it yourself: have your agent call ', h('code', { class: 'mono' }, 'lore_check_proof'), ' with the receipt root.'));
+      body.append(h('p', { class: 'p-hint' }, rootOk
+        ? h('a', { href: 'workspace.html#agent' }, 'Check this receipt with your agent →')
+        : 'Ask your agent to run lore_check_proof with the receipt root.'));
     }
     det.append(body);
     return det;
@@ -307,9 +301,10 @@
       h('h3', {}, t.title || `Topic ${t.topic_id}`),
       t.description ? h('p', { class: 'desc' }, t.description) : null,
       h('div', { class: 'row' },
-        h('span', { class: 'price' }, `${usdc(topicPrice(t))} USDC · lifetime pass`),
+        h('span', { class: 'price' }, `${usdc(topicPrice(t))} USDC${state.source === 'snapshot' ? ' · historical price' : ' · topic pass'}`),
         h('span', {}, h('b', {}, fmtInt(t.buyers)), ' buyers'),
         h('span', {}, h('b', {}, fmtInt(t.contributors)), ' contributors')),
+      h('a', { href: `workspace.html#topic/${t.topic_id}` }, state.source === 'live' ? 'Read or buy this topic →' : 'Open this topic on your gateway →'),
       proofBadge(t.proof, 'Curator', 'this topic summary'),
     );
     renderGraph();
@@ -529,7 +524,7 @@
       h('span', {}, h('b', {}, el), ' eligible'), h('span', {}, 'quorum ', h('b', {}, need))));
     if (s.status === 'Reported') {
       const left = isNum(s.reported_at) ? s.reported_at + p.voting_window - Date.now() / 1000 : null;
-      wrap.append(h('p', { class: 'vote-note' }, left != null && left > 0 ? `Voting open, about ${Math.max(1, Math.round(left / 3600))}h left. Ends early once one side can't lose.` : 'Voting open. Ends early once one side can\'t lose.'));
+      wrap.append(h('p', { class: 'vote-note' }, left != null && left <= 0 ? 'Voting deadline passed. Awaiting finalization.' : left != null ? `Voting open, about ${Math.max(1, Math.round(left / 3600))}h left. Ends early once one side can't lose.` : 'Voting open. Ends early once one side can\'t lose.'));
     }
     return wrap;
   }
@@ -616,11 +611,12 @@
     ['lore_check_proof', 'Verify a TEE proof receipt'],
     ['lore_create_wallet', 'Create your Lore wallet (Turnkey; you own it, Lore signs only Lore calls)'],
     ['lore_wallet', 'Your wallet address and balances'],
+    ['lore_link_wallet', 'Link a self-held wallet with a signed message'],
     ['lore_whoami', 'Your person and linked wallets'],
     ['lore_continue', 'Send an action your human approved with World ID'],
   ];
   function renderConnect() {
-    let url = state.data.mcp_url;
+    let url = state.source === 'live' ? state.data.mcp_url : null;
     if (!url && state.api) url = `${state.api}/mcp`;
     if (!url) url = '<gateway>/mcp';
     add(clear($('mcpBody')), [
@@ -629,7 +625,7 @@
       h('h3', {}, 'Claude Code'), copyRow(`claude mcp add --transport http lore ${url}`),
       h('ul', { class: 'bullets' },
         h('li', {}, 'Sign in with World ID: one person, one vote, however many agents you run.'),
-        h('li', {}, 'Transactions come back unsigned and your agent signs them locally. Keys never leave your machine.'),
+        h('li', {}, 'Self-held wallets receive unsigned transactions to sign locally. Turnkey wallets let Lore sign authorized Lore calls; gateways configured with Agent Pass request fresh World ID approval.'),
         h('li', {}, 'Content tools check on-chain access, vote eligibility or role before returning anything.')),
       h('h3', {}, `${TOOLS.length} tools`),
       h('ul', { class: 'tools' }, TOOLS.map(([n, d]) => h('li', {}, h('code', {}, n), h('span', {}, d)))),
@@ -643,7 +639,7 @@
     box.append(h('p', { class: 'note' },
       'Each copy delivered to a buyer or voter carries an invisible watermark (zero-width characters keyed to their wallet). When leaked text turns up, the leak detector matches the watermark and records it on-chain with ',
       h('code', { class: 'mono' }, 'Reports.recordMatch'), isAddr(reportsAddr) ? [' (', addrLink(reportsAddr), ')'] : null,
-      '. A proven leaker is removed from Lore completely (every wallet of that person, every topic) through ',
+      '. A match identifies a delivered copy. It does not by itself prove who leaked it or automatically ban a person. Person-wide bans are recorded separately through ',
       h('code', { class: 'mono' }, 'PersonRegistry.ban'), '.'));
     if (!d.reports.length) { box.append(h('p', { class: 'empty' }, 'No leak reports yet.')); return; }
     const traced = d.reports.filter((r) => r.matched).length;
@@ -654,10 +650,10 @@
         h('span', { class: `badge ${r.matched ? 'traced' : 'clean'}` }, r.matched ? 'Traced' : 'No match'),
         h('span', { class: 'score', title: 'Watermark match score' }, isNum(r.score_bps) ? `${pctBps(r.score_bps)} match` : '')),
       h('div', { class: 't' }, topicTitle(r.topic_id)),
-      r.matched ? h('div', { class: 't' }, 'Leaked by ', addrLink(r.matched_wallet)) : h('div', { class: 't' }, 'No watermark matched a known reader.')))));
+      r.matched ? h('div', { class: 't' }, 'Matched copy: ', addrLink(r.matched_wallet)) : h('div', { class: 't' }, 'No watermark matched a known reader.')))));
   }
 
-  const CHECK_STATUS = { approved: 'Approved', used: 'Approved · sent', denied: 'Denied', expired: 'Expired', pending: 'Waiting' };
+  const CHECK_STATUS = { approved: 'Approved', used: 'Approval used · check transaction receipt', denied: 'Denied', expired: 'Expired', pending: 'Waiting' };
   function renderCheckpoints() {
     const box = clear($('checkBody'));
     const list = Array.isArray(state.data.checkpoints) ? state.data.checkpoints : [];
@@ -708,13 +704,12 @@
     const d = state.data;
     if (state.topicId == null || !topicById(state.topicId)) state.topicId = d.topics.length ? d.topics[0].topic_id : null;
     // Keep any open proof panels open across live refreshes is not worth the complexity; selection is preserved instead.
-    renderHeader(); renderStats(); renderSteps();
+    renderHeader(); renderPulse();
     renderTopicList();
     if (state.topicId != null && !(state.nodeId != null && nodeById(state.nodeId) && nodeById(state.nodeId).topic_id === state.topicId)) {
       selectTopic(state.topicId, null, false);
     } else renderTopic();
     renderFilters(); renderSubs();
-    renderConnect(); renderLeaks(); renderCheckpoints(); renderContracts();
   }
 
   let rt = null;
@@ -729,6 +724,13 @@
 
   state.api = resolveApi();
   load(true).then(() => {
+    // Fragment navigation initially runs against empty sections. Restore it after hydration.
+    const followFragment = () => {
+      const target = document.getElementById(location.hash.slice(1));
+      if (target) target.scrollIntoView({ behavior: 'instant', block: 'start' });
+    };
+    requestAnimationFrame(followFragment);
+    window.addEventListener('hashchange', followFragment);
     if (state.api) setInterval(() => { if (!document.hidden) load(false); }, REFRESH_MS);
   });
 })();
