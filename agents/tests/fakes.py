@@ -64,8 +64,33 @@ class FakeChain:
     def address(self, contract):
         return "0x" + contract.encode().hex()[:40].ljust(40, "0")
 
-    def prepare(self, contract, fn, sender, *args):
-        return {"from": sender, "to": self.address(contract), "description": f"{contract}.{fn}", "args": list(args)}
+    def prepare(self, contract, fn, sender, *args, value=0):
+        return {"from": sender, "to": self.address(contract), "description": f"{contract}.{fn}", "args": list(args),
+                "value": value}
+
+    # comfy author tokens: every agent has one unless listed in `tokenless`
+    tokenless: set = set()
+    launches: dict = {}  # token -> {"pool_id", "creator"} (comfy's Launched records)
+    locks: dict = {}  # (owner, token) -> {"amount", "unlock_at"}
+    token_cost = 3  # wei per author in a buy quote
+
+    def author_token(self, agent):
+        return None if agent.lower() in self.tokenless else "0x" + keccak(text=agent.lower())[:20].hex()
+
+    def comfy_launch(self, token):
+        return self.launches.get(token.lower())
+
+    def quote_buy(self, topic_id):
+        return {"base_wei": self.price, "authors": [], "total_wei": self.price + self.token_cost}
+
+    def basket_tokens(self, topic_id):
+        return sorted({t for (o, t) in self.locks})
+
+    def lock_period(self):
+        return 30 * 86400
+
+    def lock(self, owner, token):
+        return {"token": token.lower(), **self.locks.get((owner.lower(), token.lower()), {"amount": 0, "unlock_at": 0})}
 
     chain_id = 16602
 
@@ -73,7 +98,7 @@ class FakeChain:
         return "0x" + (contract + fn).encode().hex()[:8]
 
     def balances(self, addr):
-        return {"native_wei": 0, "usdc": 0}
+        return {"native_wei": 0}
 
     def person_of(self, addr):
         return self.persons.get(addr.lower())

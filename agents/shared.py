@@ -9,7 +9,8 @@ import os
 from pathlib import Path
 
 DIR = Path(os.environ.get("LORE_SHARED_DIR") or Path(__file__).resolve().parents[1] / "shared" / "lore_shared")
-ABI_FILE = {"USDC": "MockUSDC"}  # contract name in deployments -> ABI file
+# contract name in deployments -> ABI file: MockComfy has the same functions comfy's real contracts do (spike C1)
+ABI_FILE = {"ComfyRouter": "MockComfy", "ComfyPoolManager": "MockComfy", "ComfyLauncher": "MockComfy"}
 
 
 def abi(name: str) -> list:

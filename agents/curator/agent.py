@@ -110,6 +110,8 @@ def curate(node_id: int, *, gw, llm, upload_json, memory: Memory | None = None) 
 
     m, receipt = _write(llm, NODE_V, {"topic": current, "research": p["text"]}, upload_json)
     node_meta = {"node_id": str(node_id), **m, "receipt": receipt, "created_at": now}
+    if p.get("contributor"):  # who wrote it, and the comfy token a buyer of the topic receives for it
+        node_meta |= {"author": p["contributor"], "author_token": p.get("author_token") or ""}
 
     nodes = [known[k] for k in sorted(known)] + [m]
     t, t_receipt = _write(llm, TOPIC_V, {"current": current, "nodes": nodes}, upload_json)

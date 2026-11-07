@@ -37,7 +37,7 @@ class Signer:
             try:
                 gas = w3.eth.estimate_gas(call)
             except Exception as e:  # reverts, missing allowance, no 0G for gas...
-                raise LoreError(f"{what} would fail: {e}. Is your wallet {sender} funded with 0G (gas) and USDC?") from e
+                raise LoreError(f"{what} would fail: {e}. Is your wallet {sender} funded with enough 0G?") from e
             if gas > MAX_GAS:
                 raise LoreError(f"{what} needs {gas} gas, more than Lore's wallet policy allows ({MAX_GAS})")
             tip = w3.eth.max_priority_fee
@@ -62,7 +62,7 @@ class Signer:
         return h.to_0x_hex()
 
     def send_all(self, txs: list[dict]) -> list[str]:
-        """In order: each waits for the previous (e.g. a USDC approval before the stake is pulled). If one fails,
+        """In order: each waits for the previous (e.g. several royalty claims). If one fails,
         the error lists the transactions that already went through, so the user knows what happened."""
         done = []
         for tx in txs:

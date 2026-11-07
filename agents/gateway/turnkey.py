@@ -27,7 +27,11 @@ from turnkey_api_key_stamper import ApiKeyStamper, ApiKeyStamperConfig
 API = "https://api.turnkey.com"
 DONE = "ACTIVITY_STATUS_COMPLETED"
 FAILED = {"ACTIVITY_STATUS_FAILED", "ACTIVITY_STATUS_REJECTED"}
-MAX_GAS = 3_000_000  # per transaction, in the policies and the Signer; Lore's calls need far less
+MAX_GAS = 5_000_000  # per transaction, in the policies and the Signer: a 10-author purchase is 10 comfy swaps
+# 0G a paying call (Access.buy, Submissions.submit) may carry; every other Lore call carries none.
+# ponytail: one cap for both; Turnkey compared `eth.tx.value == 0` in spike T1, a large `<=` is not yet verified live.
+MAX_VALUE_WEI = 10 * 10**18
+PAYABLE = {"Access.buy", "Submissions.submit"}
 # ponytail: no fee-per-gas cap yet (eth.tx has value and gas; a max_fee_per_gas field isn't confirmed). Fees go
 # to validators, so a bad fee burns the user's 0G but pays no attacker. Add the cap if spike T1 finds the field.
 RETRY_WINDOW_MS = 55 * 60 * 1000  # Turnkey accepts a timestampMs up to 1 h old; create_wallet's retries rely on it
@@ -49,25 +53,18 @@ def lore_policies(delegated_user_id: str, chain_id: int, contracts: dict[str, st
     """What Lore's delegated key may sign: only Lore's calls, only on Lore's chain.
 
     contracts: name -> address. selectors: "Contract.fn" -> 4-byte selector (0x-hex).
-    USDC.approve is allowed only with Lore's Submissions or Access contract as the spender (the first
-    argument, hex chars 34..74 of the calldata), so an approval can never point USDC anywhere else.
+    Everything is paid in native 0G, so the only way value leaves the wallet is in a call to Lore's own contracts:
+    Access.buy and Submissions.submit may carry up to MAX_VALUE_WEI, every other call none.
     """
     a = {k: v.lower() for k, v in contracts.items()}
     consensus = f"approvers.any(user, user.id == '{delegated_user_id}')"
-    base = f"eth.tx.chain_id == {chain_id} && eth.tx.value == 0 && eth.tx.gas <= {MAX_GAS}"
-
-    def allow(name: str, condition: str) -> dict:
-        return {"policyName": f"Lore: {name}", "effect": "EFFECT_ALLOW", "consensus": consensus,
-                "condition": f"{base} && {condition}", "notes": "Lore delegated access"}
-
-    out = [allow(f"approve USDC to {spender}",
-                 f"eth.tx.to == '{a['USDC']}' && eth.tx.data[0..10] == '{selectors['USDC.approve']}'"
-                 f" && eth.tx.data[34..74] == '{a[spender][2:]}'")
-           for spender in ("Submissions", "Access")]
+    base = f"eth.tx.chain_id == {chain_id} && eth.tx.gas <= {MAX_GAS}"
+    out = []
     for call, sel in selectors.items():
-        contract = call.split(".")[0]
-        if contract != "USDC":
-            out.append(allow(call, f"eth.tx.to == '{a[contract]}' && eth.tx.data[0..10] == '{sel}'"))
+        value = f"eth.tx.value <= {MAX_VALUE_WEI}" if call in PAYABLE else "eth.tx.value == 0"
+        out.append({"policyName": f"Lore: {call}", "effect": "EFFECT_ALLOW", "consensus": consensus,
+                    "condition": f"{base} && {value} && eth.tx.to == '{a[call.split('.')[0]]}'"
+                                 f" && eth.tx.data[0..10] == '{sel}'", "notes": "Lore delegated access"})
     return out
 
 

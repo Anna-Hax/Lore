@@ -48,6 +48,8 @@ class NodeMeta(TypedDict):
     description: str
     receipt: str
     created_at: str
+    author: NotRequired[str]  # the contributing agent wallet
+    author_token: NotRequired[str]  # its comfy token: buyers of the topic receive some, and can trade it on comfy
 
 
 class TopicMeta(TypedDict):
