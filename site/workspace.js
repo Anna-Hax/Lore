@@ -13,7 +13,7 @@ function node(tag, attrs = {}, ...children) {
 const p = text => node('p', {}, text);
 const link = (text, href, cls = '') => node('a', { href, class: cls }, text);
 const panel = (title, ...children) => node('section', { class: 'card panel' }, node('h3', {}, title), ...children);
-const money = value => { try { const n = BigInt(value); return `${n / 1000000n}.${(n % 1000000n).toString().padStart(6, '0').replace(/0+$/, '') || '00'} USDC`; } catch { return 'Unavailable'; } };
+const money = value => { try { const n = BigInt(value); return `${n / 10n ** 18n}.${(n % 10n ** 18n).toString().padStart(18, '0').replace(/0+$/, '') || '0'} 0G`; } catch { return 'Unavailable'; } };
 const short = value => typeof value === 'string' && value.length > 16 ? `${value.slice(0, 8)}…${value.slice(-4)}` : value || '—';
 const addr = value => /^0x[0-9a-fA-F]{40}$/.test(value || '');
 function showError(box, error) {
@@ -64,39 +64,12 @@ async function actionResult(data, box) {
     return;
   }
   sessionStorage.removeItem('lore.web.checkpoint');
-  if (data.sign_locally && data.transactions?.length) {
-    const detail = node('details', {}, node('summary', {}, 'Review unsigned transactions'), node('pre', { class: 'details-json' }, JSON.stringify(data.transactions, null, 2)));
-    const sign = button('Sign with browser wallet', async () => { sign.remove(); await sendTransactions(data.transactions, box); }, true);
-    box.append(p('Review each transaction and sign it with the matching self-held wallet.'), detail, sign);
-  } else if (data.tx_hashes?.length) {
+  if (data.tx_hashes?.length) {
     box.append(p('Transactions sent. Check their receipts for the final on-chain result.'));
     data.tx_hashes.forEach(hash => box.append(node('p', { class: 'address' }, hash)));
   } else box.append(p(data.message || data.next || 'No transaction was sent.'));
   box.append(button('Refresh account', renderAccount));
 }
-async function sendTransactions(transactions, box) {
-  const provider = window.ethereum;
-  if (!provider?.request) throw new Error('No browser wallet detected.');
-  const accounts = await provider.request({ method: 'eth_requestAccounts' });
-  for (const tx of transactions) {
-    if (Number(tx.chain_id) !== 16602 || !addr(tx.to) || !/^0x[0-9a-f]*$/i.test(tx.data)) throw new Error('Unexpected transaction format or network. Nothing further was sent.');
-    if (!accounts.some(value => value.toLowerCase() === tx.from.toLowerCase())) throw new Error(`Select wallet ${tx.from} before signing. Nothing further was sent.`);
-    if (BigInt(await provider.request({ method: 'eth_chainId' })) !== 16602n) await provider.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x40da' }] });
-    if (BigInt(await provider.request({ method: 'eth_chainId' })) !== 16602n) throw new Error('Switch to 0G Galileo (16602).');
-    const hash = await provider.request({ method: 'eth_sendTransaction', params: [{ from: tx.from, to: tx.to, data: tx.data, value: `0x${BigInt(tx.value || 0).toString(16)}` }] });
-    const status = p(`${tx.description || 'Transaction'} sent: ${hash}. Waiting for receipt…`); box.append(status);
-    let receipt = null;
-    for (let i = 0; i < 40 && !receipt; i++) {
-      await new Promise(resolve => setTimeout(resolve, 3000));
-      receipt = await provider.request({ method: 'eth_getTransactionReceipt', params: [hash] });
-    }
-    if (!receipt) throw new Error(`Transaction ${hash} is still pending. Check it before retrying.`);
-    if (BigInt(receipt.status) !== 1n) throw new Error(`Transaction ${hash} reverted. Remaining transactions were not sent.`);
-    status.textContent = `${tx.description || 'Transaction'} confirmed: ${hash}`;
-  }
-  box.append(p('All transaction receipts succeeded. Refresh your account after the gateway indexes them.'));
-}
-
 async function overview() {
   if (hosted()) {
     try { const response = await fetch('/api/overview', { cache: 'no-store' }); if (response.ok) return { ...await response.json(), archived: false }; }
@@ -107,21 +80,6 @@ async function overview() {
   return { ...await response.json(), archived: true };
 }
 
-async function connectWallet() {
-  const provider = window.ethereum;
-  if (!provider?.request) throw new Error('No browser wallet detected. Install a wallet extension first.');
-  const [wallet] = await provider.request({ method: 'eth_requestAccounts' });
-  if (!addr(wallet)) throw new Error('Your wallet did not return a valid address.');
-  if (!hosted() || !loggedIn()) {
-    $('browserWallet').textContent = `Browser wallet connected: ${wallet}. Sign in with World ID on your gateway to link it to Lore.`;
-    return;
-  }
-  const challenge = await call('lore_link_wallet', { wallet });
-  const message = '0x' + Array.from(new TextEncoder().encode(challenge.sign_this), value => value.toString(16).padStart(2, '0')).join('');
-  const signature = await provider.request({ method: 'personal_sign', params: [message, wallet] });
-  await call('lore_link_wallet', { wallet, signature });
-  await renderAccount();
-}
 let accountRun = 0;
 async function renderAccount() {
   const run = ++accountRun;
@@ -139,22 +97,19 @@ async function renderAccount() {
     if (walletData) {
       const wallets = walletData.wallets || [];
       box.append(panel('Linked wallets', wallets.length ? node('ul', { class: 'record-list' }, wallets.map(wallet =>
-        node('li', {}, node('p', { class: 'address' }, wallet.address), p(wallet.lore_can_sign ? 'Lore wallet · delegated Lore calls' : 'Self-held · you sign locally'),
-          p(`${money(wallet.usdc)} · ${wallet.native_wei ?? '—'} wei for gas`)))) : p('No wallet linked yet. Connect one below.')));
+        node('li', {}, node('p', { class: 'address' }, wallet.address), p('Lore wallet (Turnkey) · Lore may sign only Lore calls'),
+          p(`${money(wallet.native_wei)}${wallet.author_token ? ` · author token ${short(wallet.author_token)}` : ' · no author token yet (lore_link_token)'}`)))) : p('No wallet yet. Create your Lore wallet below.')));
     } else showError(box, results[1].reason);
     if (earnings) {
       const total = BigInt(earnings.total || 0);
       const claim = button('Review royalty claim', () => perform('Claim royalties', `Claim ${money(earnings.total)} into the wallets that earned it?`, 'lore_claim'), true);
       claim.disabled = total <= 0n;
       box.append(panel('Royalties', node('p', { class: 'amount' }, money(earnings.total)),
-        p('Available USDC from accepted research nodes. Your wallet needs 0G for gas.'), claim,
+        p('Royalties in 0G from your accepted research nodes. Your wallet also pays gas in 0G.'), claim,
         Object.keys(earnings.by_node || {}).length ? node('details', {}, node('summary', {}, 'By research node'),
           node('ul', { class: 'record-list' }, Object.entries(earnings.by_node).map(([id, amount]) => node('li', {}, `Node #${id} · ${money(amount)}`)))) : null));
     } else showError(box, results[2].reason);
   }
-  const wallet = panel('Connect a browser wallet', p('Connect your self-held wallet. When signed in, you will sign a one-time message to link it to your World ID person.'),
-    button(hosted() && loggedIn() ? 'Connect & link wallet' : 'Connect browser wallet', connectWallet, true),
-    node('p', { id: 'browserWallet', class: 'muted', role: 'status' }));
   const managed = panel('Create a Lore wallet', p('You own the Turnkey account. Lore may sign only authorized Lore calls for you.'),
     hosted() && loggedIn() ? (() => {
       const form = node('form'), label = node('label', {}, 'Wallet recovery email'), input = node('input', { type: 'email', autocomplete: 'email', required: true });
@@ -164,7 +119,7 @@ async function renderAccount() {
       } catch (error) { showError(form, error); } finally { submit.disabled = false; } };
       return form;
     })() : link('Sign in to create a wallet →', 'login.html', 'button'));
-  box.append(node('div', { class: 'workspace-grid' }, wallet, managed));
+  box.append(node('div', { class: 'workspace-grid' }, managed));
 }
 
 const TOOLS = [
@@ -173,7 +128,7 @@ const TOOLS = [
   ['lore_vote', 'Cast your vote'], ['lore_buy', 'Buy a topic pass'], ['lore_read_topic', 'Read a topic you own'],
   ['lore_claimable', 'Royalties you can claim'], ['lore_claim', 'Claim royalties'], ['lore_report_leak', 'Report leaked text'],
   ['lore_check_proof', 'Verify a TEE proof receipt'], ['lore_create_wallet', 'Create a Lore wallet'], ['lore_wallet', 'Wallets and balances'],
-  ['lore_link_wallet', 'Link a self-held wallet'], ['lore_whoami', 'Your person and wallets'], ['lore_continue', 'Continue an approved action'],
+  ['lore_create_wallet', 'Create your Lore (Turnkey) wallet'], ['lore_link_token', 'Link your comfy author token'], ['lore_whoami', 'Your person and wallets'], ['lore_continue', 'Continue an approved action'],
 ];
 function renderAgent(data) {
   const url = data.archived ? '<gateway>/mcp' : (data.mcp_url || `${location.origin}/mcp`);
@@ -214,7 +169,8 @@ const CONTRACTS = [
   ['LoreRoles', 'Roles: verifier, curator, leak detector'], ['PersonRegistry', 'One World ID person, many linked wallets'],
   ['TopicGraph', 'Topics and node commit graph'], ['Submissions', 'Stakes, verifier reports and votes'],
   ['Access', 'Soulbound topic passes'], ['Royalties', 'Sale splits and claims'], ['Reports', 'Leak reports and traced matches'],
-  ['USDC', 'Test USDC, 6 decimals'],
+  ['AuthorTokens', "Each author's comfy token"],
+  ['LockVault', "Buyers' author tokens, locked 30 days"],
 ];
 function renderContracts(data) {
   const chain = data.chain || {}, map = chain.contracts || {};
@@ -247,7 +203,7 @@ async function renderTopic() {
   if (run !== topicRun || !loggedIn()) return;
   const wallets = balance.wallets || [];
   const selector = node('select', { 'aria-label': 'Paying wallet' }, wallets.length
-    ? wallets.map(wallet => node('option', { value: wallet.address }, `${short(wallet.address)} · ${money(wallet.usdc)}`))
+    ? wallets.map(wallet => node('option', { value: wallet.address }, `${short(wallet.address)} · ${money(wallet.native_wei)}`))
     : node('option', { value: '' }, 'Link a wallet first'));
   const reading = panel('Your watermarked copy', p('Only a wallet with topic access can read the research.'));
   const read = button('Read my copy', async () => {
