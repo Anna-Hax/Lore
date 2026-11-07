@@ -27,11 +27,11 @@ ATTEMPT_TTL = 1800  # seconds a login/approval attempt stays open
 CLOCK_SKEW = 60
 ACR_PREFIX = "https://world.org/oidc/acr/"
 ACCEPTED_ACR = (ACR_PREFIX + "orb", ACR_PREFIX + "orb-face")  # the default; production discovery advertises these
-ACR_CLASSES = ("orb", "orb-face", "selfie", "selfie-face")   # all classes World IdP's docs define
+ACR_CLASSES = ("orb", "orb-face")  # Lore accepts Orb only (team decision: no Selfie Check)
 
 
 def parse_acr(setting: str | None) -> tuple[str, ...] | None:
-    """WORLD_IDP_ACR: "any" (no requirement), or comma-separated class names, e.g. "selfie,selfie-face"."""
+    """WORLD_IDP_ACR: comma-separated Orb class names ("orb", "orb-face"), or "any" (no requirement)."""
     if not setting:
         return ACCEPTED_ACR
     if setting.strip() == "any":

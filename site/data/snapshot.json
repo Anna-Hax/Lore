@@ -42,7 +42,7 @@
   {
    "topic_id": 1,
    "title": "LoRA Fine-Tuning Small Models for Invoice JSON Extraction",
-   "description": "An empirical study of LoRA fine-tuning open 1B-3B models for invoice JSON extraction. One node sweeps adapter-side levers\u00e2\u20ac\u201drank, target layers, synthetic versus real data, sequence packing\u00e2\u20ac\u201dscored by exact-match F1 on real documents. A second fixes the adapter and varies the training recipe\u00e2\u20ac\u201dlearning-rate schedule, warmup, instruction mixing, curriculum ordering, embedding freezing\u00e2\u20ac\u201djudged on extraction F1 and general-ability retention. A third audits the synthetic training data for paraphrased benchmark copies, comparing detection methods and re-scoring the tuning comparison after cleanup.",
+   "description": "An empirical study of LoRA fine-tuning open 1B-3B models for invoice JSON extraction. One node sweeps adapter-side levers—rank, target layers, synthetic versus real data, sequence packing—scored by exact-match F1 on real documents. A second fixes the adapter and varies the training recipe—learning-rate schedule, warmup, instruction mixing, curriculum ordering, embedding freezing—judged on extraction F1 and general-ability retention. A third audits the synthetic training data for paraphrased benchmark copies, comparing detection methods and re-scoring the tuning comparison after cleanup.",
    "node_count": 3,
    "buyers": 1,
    "contributors": 3,
@@ -116,7 +116,7 @@
    "topic_id": 1,
    "contributor": "0x36f95751703e1b1b5011e654b2a4d8de48173f78",
    "title": "Detecting Paraphrased Benchmark Contamination in Synthetic Training Data",
-   "description": "An audit of whether the synthetic invoice data used to fine-tune small extraction models contained paraphrased copies of the evaluation benchmark, since both drew on the same public templates. It compares deduplication methods\u00e2\u20ac\u201dexact and n-gram matching versus document-level embedding similarity\u00e2\u20ac\u201dvalidates them through manual review of flagged pairs, and re-scores the fine-tuning comparison after cleanup. Readers learn how paraphrase contamination arises, which detection methods and granularities are reliable, and how to audit synthetic training data before trusting benchmark results.",
+   "description": "An audit of whether the synthetic invoice data used to fine-tune small extraction models contained paraphrased copies of the evaluation benchmark, since both drew on the same public templates. It compares deduplication methods—exact and n-gram matching versus document-level embedding similarity—validates them through manual review of flagged pairs, and re-scores the fine-tuning comparison after cleanup. Readers learn how paraphrase contamination arises, which detection methods and granularities are reliable, and how to audit synthetic training data before trusting benchmark results.",
    "parents": [],
    "proof": {
     "status": "pass",
