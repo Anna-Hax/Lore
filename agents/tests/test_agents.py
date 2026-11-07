@@ -197,29 +197,40 @@ def meta(title="Coalitions in Maharashtra", n=350):
     return {"title": title, "description": "d" * n}
 
 
+def both(node=None, topic=None):
+    """The curator's one answer: node and topic metadata together."""
+    return {"node": node or meta(), "topic": topic or meta("Maharashtra politics")}
+
+
 def test_curator_writes_node_and_topic_meta_with_receipts():
     store, up = uploads()
-    r = curate(4, gw=CuratorGW([4]), llm=FakeLLM(meta(), meta("Maharashtra politics")), upload_json=up)
+    llm = FakeLLM(both())
+    r = curate(4, gw=CuratorGW([4]), llm=llm, upload_json=up)
+    assert len(llm.calls) == 1  # one paid model call per node, not one each for node and topic
     assert r["node_meta"]["title"] == "Coalitions in Maharashtra" and r["node_meta"]["receipt"] == root(1)
     assert r["topic_meta"]["title"] == "Maharashtra politics" and r["topic_meta"]["node_count"] == 1
-    assert [s.get("prompt_version") for s in store[:2]] == ["node_v1", "topic_v1"]
+    assert r["topic_meta"]["receipt"] == root(1) and store[0]["prompt_version"] == "curate_v2"
 
 
 def test_curator_remembers_its_own_writes_when_the_gateway_lags(tmp_path):
     memory = Memory(Jobs(str(tmp_path / "c.db")).db)
-    curate(4, gw=CuratorGW([4]), llm=FakeLLM(meta("First"), meta("Topic v1")), upload_json=uploads()[1], memory=memory)
-    llm = FakeLLM(meta("Second"), meta("Topic v2"))
+    curate(4, gw=CuratorGW([4]), llm=FakeLLM(both(meta("First"), meta("Topic v1"))), upload_json=uploads()[1],
+           memory=memory)
+    llm = FakeLLM(both(meta("Second"), meta("Topic v2")))
     r = curate(5, gw=CuratorGW([4, 5]), llm=llm, upload_json=uploads()[1], memory=memory)
-    topic_call = json.loads(llm.calls[1][0][1]["content"])
-    assert [n["title"] for n in topic_call["nodes"]] == ["First", "Second"]
-    assert topic_call["current"]["title"] == "Topic v1" and r["topic_meta"]["node_count"] == 2
+    sent = json.loads(llm.calls[0][0][1]["content"])
+    assert [n["title"] for n in sent["nodes"]] == ["First"]  # the other nodes, from memory though the gateway lags
+    assert sent["topic"]["title"] == "Topic v1" and r["topic_meta"]["node_count"] == 2
 
 
 def test_curator_retries_with_feedback_then_gives_up_on_bad_output():
-    r = curate(4, gw=CuratorGW([4]), llm=FakeLLM(meta(n=50), meta(), meta()), upload_json=uploads()[1])
-    assert len(r["node_meta"]["description"]) == 350
-    with pytest.raises(BadMeta):  # three bad answers in a row
-        curate(4, gw=CuratorGW([4]), llm=FakeLLM("not json", meta(n=900), meta(n=650)), upload_json=uploads()[1])
+    llm = FakeLLM(both(meta(n=50)), both())
+    r = curate(4, gw=CuratorGW([4]), llm=llm, upload_json=uploads()[1])
+    assert len(r["node_meta"]["description"]) == 350 and "wrong length" in llm.calls[1][0][-1]["content"]
+    r = curate(4, gw=CuratorGW([4]), llm=FakeLLM(both(meta(n=650))), upload_json=uploads()[1])
+    assert len(r["node_meta"]["description"]) == 650  # a near miss is accepted, not paid for again
+    with pytest.raises(BadMeta):  # two bad answers in a row
+        curate(4, gw=CuratorGW([4]), llm=FakeLLM("not json", both(meta(n=1000))), upload_json=uploads()[1])
 
 
 def test_curator_skips_nodes_that_already_have_metadata(tmp_path):
@@ -253,7 +264,7 @@ def test_gateway_lag_or_outage_never_kills_a_job(tmp_path):
 
 def test_curator_resends_only_the_missing_transaction(tmp_path):
     clock = {"t": 0}
-    chain, llm = chain_with("NodeAdded", "nodeId", [4]), FakeLLM(meta(), meta("Topic"))
+    chain, llm = chain_with("NodeAdded", "nodeId", [4]), FakeLLM(both())
     j = Jobs(str(tmp_path / "c.db"), now=lambda: clock["t"])
     real_send, calls = chain.send, {"n": 0}
 
@@ -272,7 +283,7 @@ def test_curator_resends_only_the_missing_transaction(tmp_path):
     clock["t"] += 60  # past the backoff
     curator.run(chain, j, gw=gw, llm=llm, upload_json=uploads()[1], start_block=0, once=True)
     assert [s[1] for s in chain.sent] == ["setNodeMeta", "setTopicMeta"] and j.status(4)["status"] == "done"
-    assert len(llm.calls) == 2  # no extra paid model calls on the retry
+    assert len(llm.calls) == 1  # no extra paid model calls on the retry
 
 
 def test_verifier_trusts_the_chain_status_before_any_paid_call(tmp_path):
