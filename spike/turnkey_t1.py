@@ -73,7 +73,14 @@ def load_env() -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--broadcast", action="store_true", help="also send a harmless Royalties.claim on 16602")
+    parser.add_argument("--quick", action="store_true",
+                        help="spend as little Turnkey quota as possible: no replay check, only the 0G-value cases")
+    parser.add_argument("--env", type=Path, help="read credentials from this file instead of .env.turnkey")
+    parser.add_argument("--state", type=Path, help="keep the test wallet's state here (one file per Turnkey org)")
     args = parser.parse_args()
+    global ENV, STATE, RESULT
+    ENV, STATE = (args.env or ENV).resolve(), (args.state or STATE).resolve()
+    RESULT = STATE.with_name(STATE.stem + "-result.json")
     env = load_env()
     tk = Turnkey(env["TURNKEY_ORGANIZATION_ID"], (env["TURNKEY_API_PUBLIC_KEY"], env["TURNKEY_API_PRIVATE_KEY"]),
                  (env["TURNKEY_DELEGATED_PUBLIC_KEY"], env["TURNKEY_DELEGATED_PRIVATE_KEY"]))
@@ -108,8 +115,9 @@ def main() -> None:
         state.update(sub=sub, address=address)
         STATE.write_text(json.dumps(state))
         check("create_wallet", True, {"sub_org": sub, "address": address, "first_run": first})
-        again = tk.create_wallet(state["person"], env["T1_EMAIL"], policies, state["ms"])
-        check("retry replays the same activities", again == (sub, address), {"retry": again})
+        if not args.quick:
+            again = tk.create_wallet(state["person"], env["T1_EMAIL"], policies, state["ms"])
+            check("retry replays the same activities", again == (sub, address), {"retry": again})
     sub, address = state["sub"], state["address"]
 
     # 2. Who is left in charge of the sub-org. Query shapes are best effort: a failure here is reported, not fatal.
@@ -141,6 +149,10 @@ def main() -> None:
         "deny: 0G attached to a vote": ({**vote, "value": 1}, False),
         "deny: gas above MAX_GAS": ({**vote, "gas": MAX_GAS + 1}, False),
     }
+    if args.quick:  # the conditions new since the first T1 run: a capped 0G value on payable calls, none elsewhere
+        keep = ("allow: Access.buy with 0G", "allow: Submissions.vote", "deny: Access.buy above MAX_VALUE_WEI",
+                "deny: 0G attached to a vote")
+        cases = {k: cases[k] for k in keep}
     for name, (tx, allowed) in cases.items():
         try:
             raw = tk.sign_transaction(sub, address, unsigned_eip1559(tx))
