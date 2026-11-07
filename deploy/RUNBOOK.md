@@ -14,7 +14,7 @@ These need people or credentials, so they are not automated:
 ## Azure host
 
 `azure.sh` prints what it will create and the cost, and asks before creating anything. It makes one
-Ubuntu 24.04 VM (B2s in Malaysia West by default), a static IP with a free
+Ubuntu 24.04 VM (B2als_v2 in Malaysia West by default), a static IP with a free
 `<label>.<region>.cloudapp.azure.com` name, a firewall (80 and 443 open, 22 only from your IP) and a storage
 account for nightly sqlite backups. First boot installs Docker, Caddy and the backup cron, and adds 2 GB of swap.
 
