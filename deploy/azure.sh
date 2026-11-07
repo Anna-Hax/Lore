@@ -4,12 +4,12 @@
 #
 # Needs `az login` with a subscription allowed in $LOCATION. Override any setting with an env var:
 #   SIZE=Standard_B1ms deploy/azure.sh
-# Rough cost (Nov 2026): B2s ~$35/month, B1ms ~$17, plus ~$7 for disk, static IP and storage.
+# Rough cost (Nov 2026): B2als_v2 ~$30/month, B1ms ~$17, plus ~$7 for disk, static IP and storage.
 set -euo pipefail
 
 RG=${RG:-lore}
 LOCATION=${LOCATION:-malaysiawest}
-SIZE=${SIZE:-Standard_B2s}
+SIZE=${SIZE:-Standard_B2als_v2}  # B2s is not offered to student subscriptions in malaysiawest
 VM=${VM:-lore}
 ADMIN=${ADMIN:-lore-admin}
 DNS_LABEL=${DNS_LABEL:-lore-$(openssl rand -hex 3)}

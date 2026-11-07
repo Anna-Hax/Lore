@@ -21,14 +21,13 @@ async function setup({ authenticated = true, viewport, failures = {}, responses 
   if (authenticated) await context.addInitScript(() => sessionStorage.setItem('lore.web.session', JSON.stringify({ access_token: 'fixture-token', client_id: 'fixture', expires_at: Date.now() + 3600000 })));
   const fixtures = {
     lore_whoami: { person: '0xperson', wallets: [wallet] },
-    lore_wallet: { wallets: [{ address: wallet, usdc: 20000000, native_wei: 1000, lore_can_sign: false }] },
-    lore_claimable: { total: 900000, by_node: { 1: 900000 } },
+    lore_wallet: { wallets: [{ address: wallet, native_wei: '2000000000000000000', lore_can_sign: true, author_token: '0x' + '2'.repeat(40) }] },
+    lore_claimable: { total: '900000000000000000', by_node: { 1: '900000000000000000' } },
     lore_claim: { human_approval_required: true, checkpoint_id: 'claim-fixture', approve_url: origin + '/checkpoint/claim-fixture' },
     lore_get_topic: { topic_id: 1, meta: { title: 'Research fixture', description: 'Public metadata' }, price: 2000000, nodes: [{ node_id: 1, meta: { title: 'Node one' } }] },
     lore_read_topic: { wallet, nodes: [{ node_id: 1, text: 'Private\u200bresearch <script>evil()</script>', parents: [] }] },
-    lore_buy: { confirm: 'This costs 2 USDC.' },
+    lore_buy: { confirm: 'This costs about 0.0603 0G.' },
     lore_continue: { status: 'sent', tx_hashes: ['0xconfirmed'] },
-    lore_link_wallet: { sign_this: 'Link this wallet' },
     ...responses,
   };
   await page.route('**/*', async route => {
@@ -82,7 +81,7 @@ test('workspace has meaningful human sections, not agent action forms or duplica
   assert.equal(await page.getByRole('button', { name: /submit research|vote yes|vote no|report a leak/i }).count(), 0);
   assert.equal(await page.getByText('Static preview', { exact: true }).count(), 0);
   assert.equal(await page.getByText('Report #1', { exact: false }).count(), 1);
-  assert.equal(await page.locator('.contract').count(), 8);
+  assert.equal(await page.locator('.contract').count(), 9);
   assert.equal(calls.length, 0);
   assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   await page.screenshot({ path: '/tmp/lore-workspace-simple-mobile.png', fullPage: true });
@@ -93,24 +92,13 @@ test('workspace has meaningful human sections, not agent action forms or duplica
   assert.deepEqual(errors, []); await context.close();
 });
 
-test('World ID account data, wallet linking and royalties share one screen', async () => {
-  const { page, context, calls, errors } = await setup();
-  await context.addInitScript(() => {
-    window.ethereum = { request: async ({ method }) => {
-      if (method === 'eth_requestAccounts') return ['0x' + '1'.repeat(40)];
-      if (method === 'personal_sign') return '0xsignature';
-      throw new Error('Unexpected wallet request: ' + method);
-    } };
-  });
+test('World ID account data, the Lore wallet and royalties share one screen', async () => {
+  const { page, context, errors } = await setup();
   await page.goto(origin + '/app/workspace.html#account');
   await page.getByText('Signed in with World ID').waitFor();
-  await page.getByText('0.9 USDC', { exact: true }).waitFor();
-  await page.getByRole('button', { name: 'Connect & link wallet' }).click();
-  await page.waitForFunction(() => window.document.querySelector('#accountBody')?.textContent.includes('Linked wallets'));
-  const links = calls.filter(item => item.params?.name === 'lore_link_wallet');
-  assert.equal(links.length, 2);
-  assert.equal(links[0].params.arguments.wallet, wallet);
-  assert.equal(links[1].params.arguments.signature, '0xsignature');
+  await page.getByText('0.9 0G', { exact: true }).waitFor();
+  await page.getByText('Lore wallet (Turnkey) · Lore may sign only Lore calls').waitFor();
+  assert.equal(await page.getByRole('button', { name: /link wallet/i }).count(), 0); // Turnkey only: no self-held wallets
   assert.equal(await page.locator('textarea').count(), 0);
   assert.deepEqual(errors, []); await context.close();
 });

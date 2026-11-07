@@ -42,7 +42,7 @@ def secrets(service: str) -> dict:
 def common() -> dict:
     env = {k: v for k, v in os.environ.items() if not k.startswith(("LORE_", "ZG_", "MASTER_KEY", "WM_SECRET"))}
     env.update(LORE_CHAIN_ID=os.environ.get("LORE_CHAIN_ID", "16602"), LORE_STORAGE_CLI=str(CLI), PYTHONUNBUFFERED="1",
-               LORE_GATEWAY_URL=GATEWAY, ZG_MODEL=os.environ.get("ZG_MODEL", "glm-5.3"))
+               LORE_GATEWAY_URL=GATEWAY, ZG_MODEL=os.environ.get("ZG_MODEL", "0gm-1.0-35b-a3b"))
     return env
 
 

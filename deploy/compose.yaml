@@ -50,7 +50,7 @@ services:
       LORE_GATEWAY_URL: http://gateway:8080
       LORE_JOBS_DB: /state/jobs.sqlite3
       LORE_STORAGE_CLI: /usr/local/bin/lore-storage-client
-      ZG_MODEL: ${ZG_MODEL:?Set a TeeML chat model from spike/FINDINGS.md}
+      ZG_MODEL: ${ZG_MODEL:-0gm-1.0-35b-a3b}  # TeeML (spike/FINDINGS.md); glm-5.3 hung on the Router
     volumes: ["./state/verifier:/state"]
     secrets: [{source: verifier_env, target: lore.env}]
 
@@ -63,7 +63,7 @@ services:
       LORE_GATEWAY_URL: http://gateway:8080
       LORE_JOBS_DB: /state/jobs.sqlite3
       LORE_STORAGE_CLI: /usr/local/bin/lore-storage-client
-      ZG_MODEL: ${ZG_MODEL:?Set a TeeML chat model from spike/FINDINGS.md}
+      ZG_MODEL: ${ZG_MODEL:-0gm-1.0-35b-a3b}  # TeeML (spike/FINDINGS.md); glm-5.3 hung on the Router
     volumes: ["./state/curator:/state"]
     secrets: [{source: curator_env, target: lore.env}]
 

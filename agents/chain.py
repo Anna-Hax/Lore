@@ -122,7 +122,7 @@ class Chain:
         base = acc.priceOf(topic_id).call()
         authors, counts = self.c["TopicGraph"].functions.topicAuthors(topic_id).call()
         per_node = acc.tokensPerNode().call()
-        router, sim = self.c["ComfyRouter"], "0x00000000000000000000000000000000000c0FFE"
+        router, sim = self.c["ComfyRouter"], Web3.to_checksum_address("0x" + "00" * 18 + "c0fe")
         out = []
         for author, n in zip(authors, counts):
             key = self.c["AuthorTokens"].functions.keyOf(author).call()

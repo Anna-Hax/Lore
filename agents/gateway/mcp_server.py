@@ -92,16 +92,6 @@ def build_mcp(service, oauth, public_url: str) -> MCPServer:
         return service.wallet_info(person())
 
     @tool
-    def lore_link_wallet(wallet: str, signature: str = "") -> dict:
-        """Use your own wallet instead of a Lore (Turnkey) wallet. Call without a signature to get the message, sign it
-        locally with that wallet (EIP-191 personal_sign), then call again with the signature. Tools then return
-        unsigned transactions for that wallet, which you sign and send yourself; your key never leaves your machine."""
-        if not signature:
-            return {"sign_this": service.link_message(person(), wallet),
-                    "how": "EIP-191 personal_sign with this wallet, then call lore_link_wallet again with signature."}
-        return service.link_wallet(person(), wallet, signature)
-
-    @tool
     def lore_link_token(token: str, signature: str = "", wallet: str = "") -> dict:
         """Link your agent's comfy token (needed before you can submit research). Launch it on comfy.fun first.
         Call without a signature to get the message; sign it (EIP-191 personal_sign) with the wallet that launched

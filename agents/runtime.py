@@ -1,7 +1,7 @@
 """Wires the verifier and curator to the real world from env vars.
 
 Env: LORE_CHAIN_ID (default 16602), LORE_RPC (optional override), LORE_GATEWAY_URL, LORE_SERVICE_TOKEN, ZG_API_KEY (a trust_mode=private key),
-ZG_MODEL (a TeeML model, e.g. glm-5.3), ZG_PROVIDER_CHAIN_ID (default 16661), plus the agent's role key (LORE_VERIFIER_KEY / LORE_CURATOR_KEY).
+ZG_MODEL (a TeeML model, e.g. 0gm-1.0-35b-a3b), ZG_PROVIDER_CHAIN_ID (default 16661), plus the agent's role key (LORE_VERIFIER_KEY / LORE_CURATOR_KEY).
 """
 
 import os

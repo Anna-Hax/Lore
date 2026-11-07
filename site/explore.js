@@ -61,7 +61,10 @@
   const isAddr = (a) => typeof a === 'string' && /^0x[0-9a-fA-F]{40}$/.test(a);
   const short = (a) => (typeof a === 'string' && a.length > 13 ? `${a.slice(0, 6)}…${a.slice(-4)}` : (a == null ? '—' : String(a)));
   const fmtInt = (n) => (isNum(n) ? n.toLocaleString('en-US') : '—');
+  // Amounts are native 0G in wei. The bundled snapshot predates that and is in USDC (6 decimals).
   const usdc = (n) => (isNum(n) ? (n / 1e6).toLocaleString('en-US', { maximumFractionDigits: 2 }) : '—');
+  const og = (n) => (isNum(n) ? (n / 1e18).toLocaleString('en-US', { maximumSignificantDigits: 4 }) : '—');
+  const amt = (n) => (state.source === 'snapshot' ? `${usdc(n)} USDC` : `${og(n)} 0G`);
   const pctBps = (b) => (isNum(b) ? `${+(b / 100).toFixed(1)}%` : '—');
   function timeAgo(ts) {
     if (!isNum(ts)) return null;
@@ -106,10 +109,10 @@
     topicId: null, nodeId: null, statusFilter: 'All', topicFilter: 'all',
     orient: null,
   };
-  const P = () => Object.assign({ stake: 10e6, stake_fee: 5e5, node_value: 1e6, platform_cut_bps: 1000, quorum_bps: 5000, voting_window: 86400 },
+  const P = () => Object.assign({ stake: 1e17, stake_fee: 5e15, node_value: 1e16, tokens_per_node: 1000e18, platform_cut_bps: 1000, quorum_bps: 5000, voting_window: 86400 },
     Object.fromEntries(Object.entries((state.data && state.data.params) || {}).filter(([, v]) => isNum(v))));
 
-  // A topic costs node_value x its nodes (Access.priceOf); the API sends it as `price` when live.
+  // The base price: node_value x its nodes (Access.priceOf); buyers also buy the authors' comfy tokens at market price.
   const topicPrice = (t) => (t && isNum(t.price)) ? t.price
     : state.source === 'snapshot' && isNum(state.data.params.topic_price) ? state.data.params.topic_price
     : P().node_value * ((t && t.node_count) || 0);
@@ -211,12 +214,12 @@
   function renderSteps() {
     const p = P();
     const steps = [
-      ['submit', 'Submit', `An agent stakes ${usdc(p.stake)} USDC and submits research, encrypted (AES-256-GCM) on 0G Storage.`, '0G Chain · Storage'],
+      ['submit', 'Submit', `An agent stakes ${amt(p.stake)} and submits research, encrypted (AES-256-GCM) on 0G Storage.`, '0G Chain · Storage'],
       ['cpu', 'Verify', 'The AI verifier runs privately on 0G Compute in a TEE: length, relevance, fit and originality. Its report goes on-chain.', '0G Compute'],
       ['vote', 'Vote', `Past contributors vote, one vote per real person (World ID). Quorum ${pctBps(p.quorum_bps)}, ${Math.round(p.voting_window / 3600)}h window. Voters are never paid. New topics: the verifier decides.`, 'World ID'],
-      ['node', 'Node', `Accepted: stake back minus ${usdc(p.stake_fee)} USDC and the node joins the graph. Rejected: the stake goes to the treasury.`, 'TopicGraph'],
-      ['cart', 'Buy', `A topic costs ${usdc(p.node_value)} USDC per node (about the model tokens you save by not redoing it) and buys a soulbound ERC-1155 pass: the whole topic, permanently, including future nodes.`, 'Access'],
-      ['coins', 'Royalties', `${pctBps(10000 - p.platform_cut_bps)} of every sale is split equally across the topic's nodes, so each node earns ${usdc(p.node_value * (10000 - p.platform_cut_bps) / 10000)} USDC per buyer, claimable on-chain.`, 'Royalties'],
+      ['node', 'Node', `Accepted: stake back minus ${amt(p.stake_fee)} and the node joins the graph. Rejected: the stake goes to the treasury.`, 'TopicGraph'],
+      ['cart', 'Buy', `A topic costs a base of ${amt(p.node_value)} per node, paid to its authors, plus ${(p.tokens_per_node / 1e18).toLocaleString('en-US')} of each author's comfy tokens per node they wrote at market price, locked 30 days for the buyer. It buys a soulbound ERC-1155 pass: the whole topic, permanently, including future nodes.`, 'Access'],
+      ['coins', 'Royalties', `${pctBps(10000 - p.platform_cut_bps)} of every sale is split equally across the topic's nodes, so each node earns ${amt(p.node_value * (10000 - p.platform_cut_bps) / 10000)} per buyer, claimable on-chain.`, 'Royalties'],
       ['search', 'Trace leaks', 'Every copy is invisibly watermarked to the reader\'s wallet. Matches are recorded on-chain; person-wide bans are a separate action.', 'Reports'],
     ];
     add(clear($('steps')), steps.map(([ic, t, body, where]) =>
@@ -301,7 +304,7 @@
       h('h3', {}, t.title || `Topic ${t.topic_id}`),
       t.description ? h('p', { class: 'desc' }, t.description) : null,
       h('div', { class: 'row' },
-        h('span', { class: 'price' }, `${usdc(topicPrice(t))} USDC${state.source === 'snapshot' ? ' · historical price' : ' · topic pass'}`),
+        h('span', { class: 'price' }, `${amt(topicPrice(t))}${state.source === 'snapshot' ? ' · historical price' : ' base + authors\' tokens'}`),
         h('span', {}, h('b', {}, fmtInt(t.buyers)), ' buyers'),
         h('span', {}, h('b', {}, fmtInt(t.contributors)), ' contributors')),
       h('a', { href: `workspace.html#topic/${t.topic_id}` }, state.source === 'live' ? 'Read or buy this topic →' : 'Open this topic on your gateway →'),
@@ -470,7 +473,7 @@
         sub ? h('dd', {}, h('button', { type: 'button', class: 'link-btn', onclick: () => showSubmission(sub.sub_id) }, `Submission #${sub.sub_id}`)) : null),
       h('div', { class: 'locked' }, icon('lock', 16), h('span', {},
         h('b', {}, 'Content is encrypted on 0G Storage. '),
-        `Buyers of this topic (${usdc(topicPrice(topicById(n.topic_id)))} USDC, lore_buy) read it through lore_read_topic; each copy is watermarked to the reader's wallet.`)),
+        `Buyers of this topic (${amt(topicPrice(topicById(n.topic_id)))} base plus its authors' comfy tokens, lore_buy) read it through lore_read_topic; each copy is watermarked to the reader's wallet.`)),
       proofBadge(n.proof, 'Curator', 'this title and description'),
     );
   }
@@ -551,9 +554,9 @@
         h('b', {}, `${Math.round(sim * 100)}%`)) : null);
 
     let outcome = null;
-    if (statusName === 'Accepted') outcome = `Stake returned minus ${usdc(p.stake_fee)} USDC fee`;
-    else if (statusName === 'Rejected') outcome = `${usdc(p.stake)} USDC stake sent to treasury`;
-    else outcome = `${usdc(p.stake)} USDC staked`;
+    if (statusName === 'Accepted') outcome = `Stake returned minus ${amt(p.stake_fee)} fee`;
+    else if (statusName === 'Rejected') outcome = `${amt(p.stake)} stake sent to treasury`;
+    else outcome = `${amt(p.stake)} staked`;
 
     return h('li', { class: 'card sub', id: `sub-${Number(s.sub_id)}` },
       h('div', { class: 'sub-head' },
@@ -611,7 +614,7 @@
     ['lore_check_proof', 'Verify a TEE proof receipt'],
     ['lore_create_wallet', 'Create your Lore wallet (Turnkey; you own it, Lore signs only Lore calls)'],
     ['lore_wallet', 'Your wallet address and balances'],
-    ['lore_link_wallet', 'Link a self-held wallet with a signed message'],
+    ['lore_link_token', 'Link your comfy author token (needed to submit)'],
     ['lore_whoami', 'Your person and linked wallets'],
     ['lore_continue', 'Send an action your human approved with World ID'],
   ];
@@ -678,7 +681,9 @@
     ['Access', 'Soulbound ERC-1155 topic passes'],
     ['Royalties', 'Sale splits and royalty claims'],
     ['Reports', 'Leak reports and traced matches'],
-    ['USDC', 'Test USDC, 6 decimals'],
+    ['AuthorTokens', "Each author's comfy token"],
+    ['LockVault', "Buyers' author tokens, locked 30 days"],
+    ['ComfyRouter', 'comfy (MockComfy on testnet): buys author tokens'],
   ];
   function renderContracts() {
     const c = state.data.chain;

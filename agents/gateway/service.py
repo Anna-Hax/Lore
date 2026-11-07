@@ -29,7 +29,6 @@ NO_TOKEN = ("Every Lore author needs a comfy token (https://www.comfy.fun): laun
             "lore_link_token. Buyers of topics you write in receive some of it.")
 LINK_TOKEN_MESSAGE = "Link comfy token {token} to Lore agent {wallet} on chain {chain_id}."
 BUY_SLIPPAGE_BPS = 300  # a purchase may cost up to 3% more than quoted (comfy prices move); the rest is refunded
-LINK_MESSAGE = "Link wallet {wallet} to Lore person {person} on chain {chain_id}."
 BANNED = "You were removed from Lore after a proven leak of paid research; you can't buy, read, submit or vote."
 POLICY_CALLS = {"Submissions": ["submit", "vote"], "Access": ["buy"], "Royalties": ["claim"], "Reports": ["report"],
                 "LockVault": ["claim"]}  # everything Lore may sign from a user's wallet
@@ -84,42 +83,6 @@ class Service:
             return {"person": person, "wallets": self.wallets(conn, person)}
 
     # --- wallets (Turnkey, delegated access) ---
-    # --- self-held wallets: the fallback when Lore doesn't sign (no Turnkey, or Turnkey unavailable) ---
-    def link_message(self, person: str, wallet: str) -> str:
-        from web3 import Web3
-
-        return LINK_MESSAGE.format(wallet=Web3.to_checksum_address(wallet), person=person.lower(),
-                                   chain_id=self.chain.chain_id or self.chain.w3.eth.chain_id)
-
-    def link_wallet(self, person: str, wallet: str, signature: str) -> dict:
-        """Link a wallet the person proves they hold (they signed link_message with it) to them, on-chain.
-
-        Lore never signs for such a wallet: its tools return unsigned transactions that the person's agent signs
-        and sends locally, so their own key is their approval. The signature only ever links that wallet to that person.
-        """
-        from eth_account import Account
-        from eth_account.messages import encode_defunct
-
-        try:
-            signer = Account.recover_message(encode_defunct(text=self.link_message(person, wallet)), signature=signature)
-        except Exception as e:
-            raise LoreError(f"unreadable signature: {e}") from e
-        if signer.lower() != wallet.lower():
-            raise LoreError("that signature is not from this wallet; sign the exact message lore_link_wallet returned")
-        current = self.chain.person_of(wallet)
-        if current and current.lower() != person.lower():
-            raise LoreError("that wallet is already linked to another person")
-        if not current:
-            self.chain.send("PersonRegistry", "register", self.chain._a(wallet), bytes.fromhex(person.removeprefix("0x")))
-        with self.tx() as conn:
-            conn.execute("INSERT OR IGNORE INTO persons VALUES (?, ?)", (wallet.lower(), person.lower()))
-        return self.whoami(person)
-
-    def self_signed(self, prepared: dict) -> bool:
-        """True when the action's wallet is one Lore holds no key for: its transactions go back unsigned."""
-        txs = prepared.get("transactions") or []
-        return bool(txs) and self.managed_sub_org(txs[0]["from"]) is None
-
     def managed_sub_org(self, address: str) -> str | None:
         """The Turnkey sub-org of a wallet Lore manages, or None."""
         with self.tx() as conn:
@@ -240,9 +203,8 @@ class Service:
     def checkpoint(self, person: str, action: str, prepared: dict) -> dict:
         """Hold a prepared action (its transactions, never plaintext) until the person approves it with World ID.
 
-        Only for wallets Lore signs for (Turnkey). A self-held wallet's transactions go back unsigned: the person's
-        own signature is their approval, so there is nothing for Lore to hold."""
-        if not self.approve_base or self.self_signed(prepared):
+        Every Lore wallet is a Turnkey wallet Lore signs for (Turnkey only, no self-held fallback)."""
+        if not self.approve_base:
             return self.send(prepared)
         cid = secrets.token_urlsafe(12)
         with self.tx() as conn:
@@ -352,13 +314,7 @@ class Service:
         return out
 
     def send(self, prepared: dict) -> dict:
-        """Sign and broadcast a prepare_* result's transactions, in order. Returns it with their hashes.
-
-        For a self-held wallet (no Turnkey sub-org) nothing is signed here: the unsigned transactions go back for the
-        person's agent to sign and send locally, in order."""
-        if self.self_signed(prepared):
-            return {**prepared, "sign_locally": True,
-                    "next": "Sign and send these transactions in order with your wallet; Lore can't sign for it."}
+        """Sign and broadcast a prepare_* result's transactions, in order. Returns it with their hashes."""
         if self.signer is None:
             raise LoreError("transaction signing isn't configured on this gateway")
         out = dict(prepared)

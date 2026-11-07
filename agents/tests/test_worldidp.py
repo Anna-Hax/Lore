@@ -212,23 +212,3 @@ from eth_account import Account as _Account
 from eth_account.messages import encode_defunct as _defunct
 
 DAVE = _Account.create()
-
-
-def test_self_held_wallet_gets_unsigned_transactions_and_no_checkpoint(env):
-    with env.svc.tx() as conn:
-        conn.execute("DELETE FROM turnkey_wallets")  # alice's wallet is now one Lore holds no key for
-    out = env.svc.checkpoint(env.alice, "pay 1 0G for topic 1", env.svc.prepare_buy(env.alice, 1))
-    assert out["sign_locally"] and "human_approval_required" not in out
-    assert [t["description"] for t in out["transactions"]] == ["Access.buy"]
-    assert env.svc.signer.txs == []  # Lore signed nothing
-
-
-def test_link_wallet_needs_that_wallets_signature_over_that_person(env):
-    me = person_of(ISS, "sub-dave")
-    msg = env.svc.link_message(me, DAVE.address)
-    assert DAVE.address in msg and me in msg
-    other = _Account.create()
-    with pytest.raises(LoreError, match="not from this wallet"):
-        env.svc.link_wallet(me, DAVE.address, other.sign_message(_defunct(text=msg)).signature.to_0x_hex())
-    out = env.svc.link_wallet(me, DAVE.address, DAVE.sign_message(_defunct(text=msg)).signature.to_0x_hex())
-    assert out["wallets"] == [DAVE.address.lower()]

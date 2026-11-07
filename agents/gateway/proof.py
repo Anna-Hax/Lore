@@ -44,7 +44,10 @@ def _signed_json(text: str):
 def claim_matches(receipt: dict, claim: dict) -> bool:
     """True if the model's signed output says exactly what Lore claims it said (e.g. the title shown to you)."""
     signed = _signed_json(receipt.get("signed_text", ""))
-    return isinstance(signed, dict) and all(signed.get(k) == v for k, v in claim.items())
+    if not isinstance(signed, dict):
+        return False
+    # The curator signs node and topic metadata in one output: {"node": {...}, "topic": {...}}.
+    return any(isinstance(d, dict) and all(d.get(k) == v for k, v in claim.items()) for d in [signed, *signed.values()])
 
 
 def check(receipt: dict, onchain_signer: str | None, claim: dict | None = None) -> dict:

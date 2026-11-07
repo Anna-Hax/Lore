@@ -4,7 +4,7 @@ from eth_account import Account
 from eth_account.messages import encode_defunct
 from eth_utils import keccak
 
-from gateway.proof import badge, check
+from gateway.proof import badge, check, response_hash
 
 TEE, OTHER = Account.create(), Account.create()
 OUT = '{"title": "x"}'
@@ -42,6 +42,10 @@ def test_claim_must_match_the_signed_output():
     bad = check(r, TEE.address, {"title": "something Lore made up"})
     assert bad["status"] == "fail" and "output_matches_claim" in bad["failed"]
     assert "DOES NOT MATCH" in badge(r, {"title": "nope"}) and "matches signed output" in badge(r, {"title": "x"})
+    text = '{"node": {"title": "n"}, "topic": {"title": "t"}}'  # the curator's combined output
+    both = receipt(text=text, response_hash=response_hash(text))
+    assert all(check(both, TEE.address, {"title": x})["status"] == "pass" for x in "nt")
+    assert check(both, TEE.address, {"title": "x"})["status"] == "fail"
 
 
 E2EE_TEXT = "zg-sig-v1/e2ee-ct:" + "ab" * 32 + ":" + "cd" * 32

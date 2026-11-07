@@ -15,13 +15,16 @@ from pathlib import Path
 import zg
 from jobs import NotReady, Skip, loop
 
-NODE_V, TOPIC_V = "node_v1", "topic_v1"
-PROMPTS = {v: (Path(__file__).parent / "prompts" / f"{v}.md").read_text() for v in (NODE_V, TOPIC_V)}
+VERSION = "curate_v2"
+PROMPT = (Path(__file__).parent / "prompts" / f"{VERSION}.md").read_text()
+# The prompt asks for 1-80 / 300-600 chars; we accept a wider band so a near-miss doesn't cost another paid,
+# minutes-long reasoning call. ponytail: tighten back to 300-600 if buyers see thin or bloated descriptions.
+TITLE_MAX, DESC_MIN, DESC_MAX, TRIES = 100, 150, 900, 2
 log = logging.getLogger("lore.curator")
 
 
 class BadMeta(Exception):
-    """The model's title/description broke the length rules twice."""
+    """The model's titles/descriptions broke the length rules on every try."""
 
 
 class Memory:
@@ -65,30 +68,34 @@ class Memory:
                             (topic_id, topic["title"], topic["description"]))
 
 
-def _write(llm, version: str, payload: dict, upload_json) -> tuple[dict, str]:
-    """One model call that must return a valid {title, description}. Up to three tries, each told what was wrong."""
-    title = desc = ""
+def _ok(m) -> bool:
+    return (isinstance(m, dict) and isinstance(m.get("title"), str) and isinstance(m.get("description"), str)
+            and 0 < len(m["title"]) <= TITLE_MAX and DESC_MIN <= len(m["description"]) <= DESC_MAX)
+
+
+def _write(llm, payload: dict, upload_json) -> tuple[dict, dict, str]:
+    """One model call that writes both the node's and the topic's {title, description}. Retried once with feedback."""
     messages = [
-        {"role": "system", "content": PROMPTS[version]},
+        {"role": "system", "content": PROMPT},
         {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
     ]
-    for _ in range(3):
-        out, receipt = llm(messages, version)
+    problem = ""
+    for _ in range(TRIES):
+        out, receipt = llm(messages, VERSION)
         try:
             m = zg.json_out(out)
-            # Not stripped: what we publish must equal the signed output byte for byte, so proofs match.
-            title, desc = str(m.get("title", "")), str(m.get("description", ""))
-        except (ValueError, AttributeError):
-            messages = messages[:2] + [{"role": "assistant", "content": out}, {
-                "role": "user", "content": "That was not valid JSON. Reply with only the JSON object {title, description}."}]
-            continue
-        if 0 < len(title) <= 80 and 300 <= len(desc) <= 600:
-            return {"title": title, "description": desc}, upload_json(receipt)
-        messages = messages[:2] + [{"role": "assistant", "content": out}, {
-            "role": "user", "content": f"Your title has {len(title)} characters (must be 1-80) and your description has "
-                                       f"{len(desc)} characters (must be 300-600). Rewrite both within those limits. "
-                                       "Reply with only the JSON object."}]
-    raise BadMeta(f"{version}: title {len(title)} chars, description {len(desc)} chars")
+            node, topic = m["node"], m["topic"]
+        except (ValueError, AttributeError, KeyError, TypeError):
+            problem = "That was not valid JSON of the required shape."
+        else:
+            if _ok(node) and _ok(topic):
+                # Not stripped: what we publish must equal the signed output byte for byte, so proofs match.
+                keep = lambda x: {"title": x["title"], "description": x["description"]}  # noqa: E731
+                return keep(node), keep(topic), upload_json(receipt)
+            problem = "A title or description was the wrong length: titles 1-80 characters, descriptions 300-600."
+        messages = messages[:2] + [{"role": "assistant", "content": out},
+                                   {"role": "user", "content": problem + " Reply with only the JSON object."}]
+    raise BadMeta(f"{VERSION}: {problem}")
 
 
 def curate(node_id: int, *, gw, llm, upload_json, memory: Memory | None = None) -> dict:
@@ -108,15 +115,14 @@ def curate(node_id: int, *, gw, llm, upload_json, memory: Memory | None = None) 
         current = memory.topic(topic_id) or current
     known.pop(node_id, None)
 
-    m, receipt = _write(llm, NODE_V, {"topic": current, "research": p["text"]}, upload_json)
+    others = [known[k] for k in sorted(known)]
+    m, t, receipt = _write(llm, {"topic": current, "nodes": others, "research": p["text"]}, upload_json)
     node_meta = {"node_id": str(node_id), **m, "receipt": receipt, "created_at": now}
     if p.get("contributor"):  # who wrote it, and the comfy token a buyer of the topic receives for it
         node_meta |= {"author": p["contributor"], "author_token": p.get("author_token") or ""}
 
-    nodes = [known[k] for k in sorted(known)] + [m]
-    t, t_receipt = _write(llm, TOPIC_V, {"current": current, "nodes": nodes}, upload_json)
     count = len({n["node_id"] for n in topic["nodes"]} | set(known) | {node_id})
-    topic_meta = {"topic_id": str(topic_id), **t, "node_count": count, "receipt": t_receipt, "created_at": now}
+    topic_meta = {"topic_id": str(topic_id), **t, "node_count": count, "receipt": receipt, "created_at": now}
 
     if memory:
         memory.save(topic_id, node_id, m, t)
