@@ -63,6 +63,20 @@ def test_launch_refuses_foreign_or_malformed_secrets(text):
         launch.secret_environment("unknown", text)
 
 
+def test_gateway_accepts_optional_agent_pass_secret_only():
+    values = {name: "1" * 64 for name in launch.REQUIRED["gateway"]}
+    base = "\n".join(f"{k}={v}" for k, v in values.items())
+    assert "WORLD_IDP_CLIENT_SECRET" not in launch.secret_environment("gateway", base)  # optional
+    secret = "not-hex_client-secret.42"
+    assert launch.secret_environment("gateway", base + f"\nWORLD_IDP_CLIENT_SECRET={secret}")["WORLD_IDP_CLIENT_SECRET"] == secret
+    for bad in ("\nWORLD_IDP_CLIENT_SECRET=", f"\nWORLD_IDP_CLIENT_SECRET={secret}\nWORLD_IDP_CLIENT_SECRET={secret}"):
+        with pytest.raises(ValueError):
+            launch.secret_environment("gateway", base + bad)
+    verifier = "\n".join(f"{k}={'1' * 64}" for k in launch.REQUIRED["verifier"])
+    with pytest.raises(ValueError):  # only the gateway may hold it
+        launch.secret_environment("verifier", verifier + f"\nWORLD_IDP_CLIENT_SECRET={secret}")
+
+
 def test_compose_matches_launch_and_keeps_secrets_out_of_the_environment():
     compose = yaml.safe_load((HERE / "compose.yaml").read_text())
     assert set(compose["services"]) == set(launch.REQUIRED)
@@ -70,7 +84,7 @@ def test_compose_matches_launch_and_keeps_secrets_out_of_the_environment():
         assert service["environment"]["LORE_SERVICE"] == name
         assert service["read_only"] is True and service["cap_drop"] == ["ALL"]
         assert service["secrets"] == [{"source": f"{name}_env", "target": "lore.env"}]
-        assert not set(service["environment"]) & set().union(*launch.REQUIRED.values())
+        assert not set(service["environment"]) & set().union(*launch.REQUIRED.values(), *launch.OPTIONAL.values())
         assert service["environment"].get("LORE_STORAGE_CLI")
     assert compose["services"]["gateway"]["ports"][0].startswith("127.0.0.1:")
     assert "ports" not in compose["services"]["verifier"] and "ports" not in compose["services"]["curator"]
