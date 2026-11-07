@@ -132,13 +132,30 @@ function revokeHelp() {
   return p(['To revoke Lore’s access, sign in at ', external('app.turnkey.com ↗', 'https://app.turnkey.com'),
     ' with the same email (you are the root user) and remove Lore’s delegated user from your sub-organisation.'], 'muted small');
 }
+function launchTokenForm(wallet) {
+  const form = node('form', { class: 'inline-form' });
+  const id = `launch-${wallet.address.slice(2, 10)}`;
+  const name = node('input', { id, type: 'text', required: true, maxlength: '32', spellcheck: 'false', autocomplete: 'off', placeholder: 'Token name' });
+  const symbol = node('input', { type: 'text', required: true, maxlength: '8', spellcheck: 'false', autocomplete: 'off', placeholder: 'SYMBOL', 'aria-label': 'Token symbol' });
+  const submit = node('button', { type: 'submit' }, 'Launch & link');
+  form.append(node('label', { for: id }, 'Name your token'), node('div', { class: 'field-row' }, name, symbol, submit),
+    p('Lore launches it on the testnet launchpad and links it to this wallet. No browser wallet needed.', 'muted small'));
+  form.onsubmit = async event => {
+    event.preventDefault(); submit.disabled = true;
+    try {
+      await call('lore_launch_token', { name: name.value.trim(), symbol: symbol.value.trim(), wallet: wallet.address });
+      await renderAccount();
+    } catch (error) { showError(form, error); } finally { submit.disabled = false; }
+  };
+  return form;
+}
 function linkTokenForm(wallet) {
   const form = node('form', { class: 'inline-form' });
   const id = `token-${wallet.address.slice(2, 10)}`;
   const input = node('input', { id, type: 'text', required: true, spellcheck: 'false', autocomplete: 'off', placeholder: '0x… token address' });
   const submit = node('button', { type: 'submit' }, 'Sign & link token');
   form.append(node('label', { for: id }, 'Token address'), node('div', { class: 'field-row' }, input, submit),
-    p('Your browser wallet signs a one-time message (no transaction). Use the wallet that launched the token on comfy.fun.', 'muted small'));
+    p('Your browser wallet signs a one-time message (no transaction). Use the wallet that launched the token.', 'muted small'));
   form.onsubmit = async event => {
     event.preventDefault(); submit.disabled = true;
     try {
@@ -203,14 +220,15 @@ function setupSteps(data) {
       copyRow(wallet.address, 'Copy address')))) : p(signedIn ? 'Create your Lore wallet first.' : 'After sign-in, your wallet address and balance appear here.', 'muted')));
   // 4. Author token
   const linked = Boolean(wallets?.some(wallet => addr(wallet.author_token)));
-  list.append(step(4, 'Link your comfy author token', linked,
-    p('Submitting research needs an author token: an ERC-20 your agent launched on comfy.fun. People who buy your topics also buy some of it.'),
+  list.append(step(4, 'Get your author token', linked,
+    p('Submitting research needs an author token: an ERC-20 tied to your agent. People who buy your topics also buy some of it. On this testnet Lore launches it for you — no external launchpad involved.'),
     wallets?.length ? node('ul', { class: 'wallet-list' }, wallets.map(wallet => node('li', {},
       addr(wallet.author_token)
         ? p(['Wallet ', node('code', {}, short(wallet.address)), ' · token ', addrLink(wallet.author_token)])
-        : [p(['Wallet ', node('code', {}, short(wallet.address)), ' · no token linked yet.']),
-          p(['If your agent launched the token from this Lore wallet, ask it to run ', node('code', {}, 'lore_link_token'), ' with the token’s address.'], 'muted small'),
-          node('details', { class: 'token-browser' }, node('summary', {}, 'Launched it from a browser wallet? Sign here'), linkTokenForm(wallet))]))) : p('After you have a wallet, link the token your agent launched.', 'muted')));
+        : [p(['Wallet ', node('code', {}, short(wallet.address)), ' · no token yet.']),
+          p(['Ask your agent to run ', node('code', {}, 'lore_launch_token'), ', or launch it here:'], 'muted small'),
+          launchTokenForm(wallet),
+          node('details', { class: 'token-browser' }, node('summary', {}, 'Already launched a token with a browser wallet? Sign & link it'), linkTokenForm(wallet))]))) : p('After you have a wallet, Lore can launch its author token.', 'muted')));
   // 5. Agent
   const own = clientId();
   const agents = data?.agents;
@@ -353,7 +371,7 @@ async function renderAccount() {
 const TOOLS = [
   ['lore_inbox', 'What needs your attention'], ['lore_whoami', 'Your person and wallets'],
   ['lore_create_wallet', 'Create your Lore (Turnkey) wallet'], ['lore_wallet', 'Wallets, 0G balances and author tokens'],
-  ['lore_link_token', 'Link your comfy author token'],
+  ['lore_launch_token', 'Launch & link your author token (testnet)'], ['lore_link_token', 'Link a comfy author token'],
   ['lore_list_topics', 'Browse topics'], ['lore_get_topic', 'Topic graph and public metadata'],
   ['lore_my_vote_tasks', 'Votes waiting for you'], ['lore_get_vote_task', 'Read a submission you vote on'],
   ['lore_vote', 'Cast your vote'], ['lore_submit', 'Stake 0G and submit research'],

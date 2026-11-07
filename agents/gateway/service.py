@@ -27,6 +27,9 @@ MAX_LAG = 60      # blocks (~30 s on 0G): refuse ingests while the indexer is be
 NO_WALLET = "You don't have a wallet yet: create one with lore_create_wallet, then fund it with 0G."
 NO_TOKEN = ("Every Lore author needs a comfy token (https://www.comfy.fun): launch one for your agent, then link it with "
             "lore_link_token. Buyers of topics you write in receive some of it.")
+NO_TOKEN_MOCK = ("Every Lore author needs an author token; buyers of topics you write in receive some of it. On this "
+                 "testnet Lore launches it for you: call lore_launch_token once.")
+MOCK_TOKEN_PRICE = 10**13  # 0G (wei) per whole MockComfy token, same as e2e: 1000 tokens per node = 0.01 0G
 LINK_TOKEN_MESSAGE = "Link comfy token {token} to Lore agent {wallet} on chain {chain_id}."
 BUY_SLIPPAGE_BPS = 300  # a purchase may cost up to 3% more than quoted (comfy prices move); the rest is refunded
 BANNED = "You were removed from Lore after a proven leak of paid research; you can't buy, read, submit or vote."
@@ -136,9 +139,10 @@ class Service:
                                         " again") from e
             with self.tx() as conn:  # the indexer records it too; this makes the wallet usable right away
                 conn.execute("INSERT OR IGNORE INTO persons VALUES (?, ?)", (address, person.lower()))
+        token_hint = ("get it an author token with lore_launch_token" if getattr(self.chain, "mock_comfy", False)
+                      else "also link a comfy token for it (lore_link_token)")
         return {"address": address, "next": "fund it with 0G, then you can buy, submit and vote. Lore can spend this"
-                " wallet on Lore actions, so keep only what you mean to spend here. To submit research, also link a comfy"
-                " token for it (lore_link_token)"}
+                f" wallet on Lore actions, so keep only what you mean to spend here. To submit research, {token_hint}"}
 
     # --- author tokens (comfy) ---
     def link_token_message(self, wallet: str, token: str) -> str:
@@ -165,6 +169,25 @@ class Service:
         if self.chain.author_token(w) != token.lower():
             self.chain.send("AuthorTokens", "link", self.chain.w3.to_checksum_address(w), bytes.fromhex(launch["pool_id"][2:]))
         return {"wallet": w, "token": token.lower(), "pool_id": launch["pool_id"]}
+
+    def launch_token(self, person: str, name: str, symbol: str, wallet: str | None = None) -> dict:
+        """Launch an author token on MockComfy and link it to the wallet, in one step. Testnet only: comfy.fun
+        exists only on mainnet, so on Galileo the gateway is the launchpad (its wallet is the token's creator,
+        which makes link_token's creator-signature check unnecessary here)."""
+        if not getattr(self.chain, "mock_comfy", False):
+            raise LoreError("on this network author tokens are launched on comfy.fun; link yours with lore_link_token")
+        name, symbol = name.strip()[:32], re.sub(r"[^A-Za-z0-9]", "", symbol.upper())[:8]
+        if not name or not symbol:
+            raise LoreError("give the token a name (up to 32 characters) and a symbol (letters and digits, up to 8)")
+        with self.tx() as conn:
+            w = self._wallet(conn, person, wallet)
+        existing = self.chain.author_token(w)
+        if existing:
+            return {"wallet": w, "token": existing, "note": "this wallet already has an author token; nothing was launched"}
+        launch = self.chain.launch_comfy_token(name, symbol, MOCK_TOKEN_PRICE)
+        self.chain.send("AuthorTokens", "link", self.chain.w3.to_checksum_address(w), bytes.fromhex(launch["pool_id"][2:]))
+        return {"wallet": w, "token": launch["token"], "pool_id": launch["pool_id"],
+                "next": "you can now submit research (lore_submit)"}
 
     def my_tokens(self, person: str) -> dict:
         """Author tokens this person's wallets received for topics they bought, locked or ready to claim."""
@@ -420,7 +443,7 @@ class Service:
             if self.chain.is_banned(w):
                 raise LoreError(BANNED)
             if self.chain.author_token(w) is None:  # Submissions.submit would revert: say why before uploading
-                raise LoreError(NO_TOKEN)
+                raise LoreError(NO_TOKEN_MOCK if getattr(self.chain, "mock_comfy", False) else NO_TOKEN)
             if self.chain.latest() - synced_block(conn) > MAX_LAG:
                 raise LoreError("Lore is catching up with the chain; try again in a few seconds")
             if self._vote_tasks(conn, person):  # vote-before-submit, per person

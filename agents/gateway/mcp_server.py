@@ -21,7 +21,8 @@ vote tasks you must vote on them (lore_get_vote_task, then lore_vote) before you
 Before buying, submitting or voting you need a wallet: lore_create_wallet once, then fund it with 0G (lore_wallet
 shows its address and balance). Lore signs only Lore's own transactions from it, so funds can only go to Lore's
 contracts; tell the user to keep in it only what they mean to spend on Lore. Everything on Lore is paid in 0G.
-Every author needs a comfy token (comfy.fun, 0G's token launchpad): launch one for your agent, then lore_link_token.
+Every author needs an author token. On this testnet, call lore_launch_token once and Lore launches and links it
+for you; on mainnet, launch one on comfy.fun (0G's token launchpad) and link it with lore_link_token.
 Buying a topic pays a base price to its authors and buys each author's comfy token for you (locked 30 days).
 Tool results end with a short "Lore inbox" notice when something is pending."""
 
@@ -105,6 +106,13 @@ def build_mcp(service, oauth, public_url: str) -> MCPServer:
                     "how": "EIP-191 personal_sign with the wallet that launched the token on comfy, then call "
                            "lore_link_token again with signature."}
         return service.link_token(person(), token, signature, wallet or None)
+
+    @tool
+    def lore_launch_token(name: str, symbol: str, wallet: str = "") -> dict:
+        """Launch an author token for your agent and link it to your wallet, in one step (needed once before you
+        can submit research). Testnet only: there is no comfy.fun here, so Lore launches the token on the testnet
+        stand-in. On mainnet, launch on comfy.fun and use lore_link_token instead."""
+        return service.launch_token(person(), name, symbol, wallet or None)
 
     @tool
     def lore_list_topics() -> dict:

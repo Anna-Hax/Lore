@@ -25,8 +25,8 @@ def hexstr(b) -> str:
 
 class Chain:
     def __init__(self, rpc: str, contracts: dict[str, str], key: str | None = None, chain_id: int | None = None,
-                 comfy_from_block: int = 0):
-        self.chain_id, self.comfy_from_block = chain_id, comfy_from_block
+                 comfy_from_block: int = 0, mock_comfy: bool = False):
+        self.chain_id, self.comfy_from_block, self.mock_comfy = chain_id, comfy_from_block, mock_comfy
         self.w3 = Web3(Web3.HTTPProvider(rpc))
         self.c = {n: self.w3.eth.contract(address=Web3.to_checksum_address(a), abi=shared.abi(n))
                   for n, a in contracts.items()}
@@ -37,7 +37,8 @@ class Chain:
     @classmethod
     def for_chain(cls, chain_id: int, key: str | None = None, rpc: str | None = None) -> "Chain":
         dep = shared.deployment(chain_id)
-        return cls(rpc or shared.network(chain_id).rpc_url, dep["contracts"], key, chain_id, dep.get("comfyFromBlock", 0))
+        return cls(rpc or shared.network(chain_id).rpc_url, dep["contracts"], key, chain_id, dep.get("comfyFromBlock", 0),
+                   dep.get("mockComfy", False))
 
     @staticmethod
     def _a(addr: str) -> str:
@@ -114,6 +115,13 @@ class Chain:
                 a = ev.process_log(logs[0])["args"]
                 return {"pool_id": "0x" + bytes(a["poolId"]).hex(), "creator": a["creator"].lower()}
         return None
+
+    def launch_comfy_token(self, name: str, symbol: str, price_wei: int) -> dict:
+        """Launch an author token from our own wallet. MockComfy only (mainnet tokens come from comfy.fun):
+        its launch() is permissionless and the gateway, as the creator, may link it without a signature."""
+        receipt = self.send("ComfyLauncher", "launch", name, symbol, price_wei)
+        a = self.c["ComfyLauncher"].events.Launched().process_receipt(receipt)[0]["args"]
+        return {"pool_id": hexstr(a["poolId"]), "token": a["token"].lower(), "creator": a["creator"].lower()}
 
     def quote_buy(self, topic_id: int) -> dict:
         """What buying `topic_id` costs right now: the base price plus each author's tokens at comfy's live price

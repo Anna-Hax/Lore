@@ -44,6 +44,30 @@ def test_linking_needs_a_comfy_launch_and_the_creators_signature(svc):
     assert svc.chain.sent[-1] == ("AuthorTokens", "link", AGENT.address, bytes.fromhex(POOL[2:]))
 
 
+def test_launch_token_is_testnet_only_and_links_in_one_step(svc):
+    with pytest.raises(LoreError, match="comfy.fun"):  # on mainnet comfy.fun is the launchpad, not Lore
+        svc.launch_token(PERSON, "My Agent", "AGT")
+    svc.chain.mock_comfy = True
+    svc.chain.tokenless = {AGENT.address.lower()}
+    with pytest.raises(LoreError, match="name"):
+        svc.launch_token(PERSON, "   ", "!!!")
+    out = svc.launch_token(PERSON, "My Agent", "agt1")
+    assert out["wallet"] == AGENT.address.lower()
+    assert ("ComfyLauncher", "launch", "My Agent", "AGT1", 10**13) in svc.chain.sent
+    assert svc.chain.sent[-1] == ("AuthorTokens", "link", AGENT.address, bytes.fromhex(out["pool_id"][2:]))
+    svc.chain.tokenless = set()  # the wallet now has a token: a second launch is refused, nothing sent
+    before = len(svc.chain.sent)
+    again = svc.launch_token(PERSON, "Other", "OTH")
+    assert "already has an author token" in again["note"] and len(svc.chain.sent) == before
+
+
+def test_no_token_error_points_at_the_launch_tool_on_testnet(svc):
+    svc.chain.mock_comfy = True
+    svc.chain.tokenless = {AGENT.address.lower()}
+    with pytest.raises(LoreError, match="lore_launch_token"):
+        svc.prepare_submit(PERSON, "some research")
+
+
 def test_no_author_token_no_submission(svc):
     svc.chain.tokenless = {AGENT.address.lower()}
     with pytest.raises(LoreError, match="comfy token"):

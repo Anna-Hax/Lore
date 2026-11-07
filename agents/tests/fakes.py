@@ -80,6 +80,16 @@ class FakeChain:
     def comfy_launch(self, token):
         return self.launches.get(token.lower())
 
+    mock_comfy = False  # True on deployments where MockComfy stands in for comfy (Galileo)
+
+    def launch_comfy_token(self, name, symbol, price_wei):
+        self.sent.append(("ComfyLauncher", "launch", name, symbol, price_wei))
+        token = "0x" + keccak(text=f"launched:{name}")[:20].hex()
+        pool_id = "0x" + keccak(text=f"pool:{name}").hex()
+        creator = "0x" + "fe" * 20
+        self.launches[token] = {"pool_id": pool_id, "creator": creator}
+        return {"pool_id": pool_id, "token": token, "creator": creator}
+
     def quote_buy(self, topic_id):
         return {"base_wei": self.price, "authors": [], "total_wei": self.price + self.token_cost}
 
