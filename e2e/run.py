@@ -2,7 +2,7 @@
 
 Each agent logs in (OAuth; the gateway's labelled demo login when World ID is not configured) and creates its
 Turnkey wallet with lore_create_wallet, exactly like a user's agent would; Lore signs every transaction from it.
-Only gas (0G) and MockUSDC funding happen outside MCP. The gateway needs Lore's Turnkey keys (BUILD_PLAN spike T1).
+Only 0G funding and each author's comfy token (MockComfy on Galileo) happen outside MCP. The gateway needs Lore's Turnkey keys (BUILD_PLAN spike T1).
 
     python deploy/run_local.py                                   # in one terminal: gateway, verifier, curator
     uv run --project agents --python 3.12 python e2e/run.py      # in another
@@ -11,7 +11,7 @@ Env: LORE_GATEWAY_URL (default http://127.0.0.1:8080), LORE_CHAIN_ID (default 16
 "none" submits the corpus text as is, for a fresh showcase deployment), E2E_TIMEOUT (seconds per wait, default 900).
 E2E_SIGNING=local uses self-held wallets instead (lore_link_wallet; every transaction signed and sent here, keys in
 deploy/state/e2e-agents.json); the fallback when Lore's Turnkey organization can't sign.
-E2E_EMAIL_DOMAIN (default example.com) names each agent's Turnkey user (lore-e2e-<name>@<domain>); gas and MockUSDC
+E2E_EMAIL_DOMAIN (default example.com) names each agent's Turnkey user (lore-e2e-<name>@<domain>); 0G and the test authors'
 come from DEPLOYER_PRIVATE_KEY in contracts/.env.
     ... python e2e/run.py --check    # log in and list the MCP tools only; no chain writes
 """
@@ -30,6 +30,7 @@ import time
 from urllib.parse import parse_qs, urlparse
 
 from eth_account import Account
+from eth_account.messages import encode_defunct
 
 from lore_shared.chain import ChainReader
 from lore_shared.watermark import FRAME, ONE, ZERO
@@ -39,12 +40,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import corpus  # noqa: E402
 
 TOOLS = {
-    "lore_inbox", "lore_whoami", "lore_create_wallet", "lore_wallet", "lore_list_topics", "lore_get_topic", "lore_my_vote_tasks",
+    "lore_inbox", "lore_whoami", "lore_link_token", "lore_my_tokens", "lore_claim_tokens", "lore_create_wallet", "lore_wallet", "lore_list_topics", "lore_get_topic", "lore_my_vote_tasks",
     "lore_get_vote_task", "lore_vote", "lore_submit", "lore_buy", "lore_read_topic", "lore_claimable", "lore_claim",
     "lore_report_leak", "lore_check_proof",
 }
 PENDING, REPORTED, ACCEPTED, REJECTED = range(4)
 TIMEOUT = float(os.environ.get("E2E_TIMEOUT", 900))
+QUICK = os.environ.get("E2E_QUICK") == "1"  # skip topic 2, which repeats what topic 1 covers
 PEOPLE = ("ada", "ben", "chen", "dana")
 
 
@@ -178,8 +180,8 @@ def deployer_key() -> str:
     raise SystemExit("DEPLOYER_PRIVATE_KEY missing from contracts/.env (it pays the test agents' gas)")
 
 
-def fund(reader: ChainReader, addresses: list[str], usdc: int) -> None:
-    """Testnet only: gas from the deployer, MockUSDC from its open mint."""
+def fund(reader: ChainReader, addresses: list[str], amount: int) -> None:
+    """Testnet only: 0G (stakes, purchases and gas) from the deployer key."""
     w3, payer = reader.web3, Account.from_key(deployer_key())
 
     def sendtx(tx):
@@ -190,11 +192,28 @@ def fund(reader: ChainReader, addresses: list[str], usdc: int) -> None:
         assert r.status == 1, "funding transaction reverted"
 
     for a in addresses:
-        if w3.eth.get_balance(a) < w3.to_wei(0.03, "ether"):
-            sendtx({"to": a, "value": w3.to_wei(0.08, "ether"), "gas": 21000})
-        if reader.call("USDC", "balanceOf", a) < usdc:
-            sendtx({"to": reader.contracts["USDC"].address,
-                    "data": reader.contracts["USDC"].encode_abi("mint", args=[a, usdc])})
+        if w3.eth.get_balance(a) < amount // 2:
+            sendtx({"to": a, "value": amount, "gas": 21000})
+
+
+TOKEN_PRICE = 10**13  # 0G (wei) per whole MockComfy token: 1000 tokens per node = 0.01 0G
+
+
+def launch_tokens(reader: ChainReader, names: list[str]) -> dict[str, str]:
+    """Galileo only: the deployer launches one MockComfy token per test author and is its creator, so it signs
+    each author's lore_link_token message. On mainnet, authors launch real tokens on comfy.fun themselves."""
+    if not reader.deployment.get("mockComfy"):
+        raise SystemExit("this deployment uses the real comfy: launch and link the test authors' tokens by hand")
+    w3, payer = reader.web3, Account.from_key(deployer_key())
+    comfy, out = reader.contracts["ComfyLauncher"], {}
+    for name in names:
+        tx = comfy.functions.launch(f"Lore e2e {name}", name.upper()[:5], TOKEN_PRICE).build_transaction(
+            {"from": payer.address, "nonce": w3.eth.get_transaction_count(payer.address, "pending"),
+             "gasPrice": w3.eth.gas_price, "chainId": w3.eth.chain_id})
+        r = w3.eth.wait_for_transaction_receipt(w3.eth.send_raw_transaction(payer.sign_transaction(tx).raw_transaction), timeout=180)
+        assert r.status == 1, "MockComfy launch reverted"
+        out[name] = comfy.events.Launched().process_receipt(r)[0]["args"]["token"]
+    return out
 
 
 class Scenario:
@@ -209,8 +228,9 @@ class Scenario:
         """A new-topic submission keeps topicId 0 on-chain; the node knows its real topic."""
         return self.reader.record("TopicGraph", "getNode", node_id)["topicId"]
 
-    def usdc(self, agent: Agent) -> int:
-        return self.reader.call("USDC", "balanceOf", agent.address)
+    def treasury(self) -> int:
+        """The treasury's 0G: rejected stakes, stake fees and the platform cut land here."""
+        return self.reader.web3.eth.get_balance(self.reader.deployment["roles"]["treasury"])
 
     async def submit(self, who: str, text: str, topic_id: int = 0) -> int:
         agent = self.a[who]
@@ -291,15 +311,15 @@ class Scenario:
         assert n1 in self.reader.call("TopicGraph", "parentsOf", n2), "follow-up does not point at the root"
 
         # 3. Chen submits a near-copy of Ada's note: the verifier fails it and the topic's people vote it down.
-        chen0 = self.usdc(self.a["chen"])
+        treasury0 = self.treasury()
         s3 = await self.submit("chen", corpus.FINETUNE_COPYCAT, t1)
         rec = await self.status(s3, REPORTED)
         assert rec["pass"] is False, "verifier passed a near-copy"
         await self.vote("ada", s3, False)
         await self.vote("ben", s3, False)
         await self.status(s3, REJECTED)
-        assert chen0 - self.usdc(self.a["chen"]) == stake, "a rejected stake must go entirely to the treasury"
-        say(f"sub {s3} rejected; Chen's {stake / 1e6:g} USDC stake went to the treasury")
+        assert self.treasury() - treasury0 == stake, "a rejected stake must go entirely to the treasury"
+        say(f"sub {s3} rejected; Chen's {stake / 1e18:g} 0G stake went to the treasury")
 
         # 4. Chen's genuine follow-up passes both people.
         s4 = await self.submit("chen", corpus.FINETUNE_EVAL, t1)
@@ -310,19 +330,22 @@ class Scenario:
         assert rec["status"] == ACCEPTED, "Chen's evaluation note was rejected"
         n4 = rec["nodeId"]
 
+        if QUICK:  # skip topic 2: it repeats paths topic 1 already covered
+            return t1, None, n1, n2, n4, None, s3
+
         # 5. Ben opens topic 2; Ada builds on it and Ben votes.
         s5 = await self.submit("ben", corpus.RAG_ROOT)
         rec = await self.status(s5, ACCEPTED, REJECTED)
         assert rec["status"] == ACCEPTED, "RAG root was rejected"
         n5 = rec["nodeId"]
         t2 = self.topic_of(n5)
-        ada0 = self.usdc(self.a["ada"])
+        treasury0 = self.treasury()
         s6 = await self.submit("ada", corpus.RAG_RERANK, t2)
         await self.status(s6, REPORTED)
         await self.vote("ben", s6, True)
         rec = await self.status(s6, ACCEPTED, REJECTED)
         assert rec["status"] == ACCEPTED, "Ada's reranking note was rejected"
-        assert self.usdc(self.a["ada"]) - ada0 == -fee, "an accepted stake comes back minus the fee"
+        assert self.treasury() - treasury0 == fee, "an accepted stake comes back minus the fee, which the treasury keeps"
         return t1, t2, n1, n2, n4, n5, s3
 
     async def market(self, t1, t2, n1, n2, n4, n5, s3) -> dict:
@@ -339,6 +362,12 @@ class Scenario:
         assert any(t["topic_id"] == t1 for t in topics["topics"])
         await self.a["dana"].act("lore_buy", topic_id=t1, confirm=True)
         assert self.reader.call("Access", "hasAccess", t1, self.a["dana"].address)
+        # ... and received each author's comfy tokens, locked in the vault
+        tokens, amounts = self.reader.call("Access", "basket", t1)
+        for token, amount in zip(tokens, amounts):
+            locked, _ = self.reader.call("LockVault", "locks", self.a["dana"].address, token)
+            assert locked == amount > 0, f"Dana's {token} tokens are not locked in the vault"
+        say(f"Dana bought topic {t1}: base to its authors, {len(tokens)} authors' comfy tokens locked for her")
         read = await self.a["dana"].tool("lore_read_topic", topic_id=t1)
         copies = [n["text"] for n in read["nodes"]]
         assert len(copies) == 3 and all(FRAME in c for c in copies), "Dana's copy is not watermarked per node"
@@ -354,11 +383,11 @@ class Scenario:
 
         # 9. Contributors claim royalties from Dana's purchase.
         claim = await self.a["ada"].tool("lore_claimable")
-        before = self.usdc(self.a["ada"])
+        gained = claim["total"]
+        assert gained > 0, f"Ada has nothing to claim: {claim}"
         await self.a["ada"].act("lore_claim")
-        gained = self.usdc(self.a["ada"]) - before
-        assert gained > 0, f"Ada claimed nothing: {claim}"
-        say(f"Ada claimed {gained / 1e6:g} USDC in royalties")
+        assert (await self.a["ada"].tool("lore_claimable"))["total"] == 0, "Ada's claim left royalties behind"
+        say(f"Ada claimed {gained / 1e18:g} 0G in royalties")
 
         r.update(topics=[t1, t2], nodes=[n1, n2, n4, n5], rejected=[s3], leak_report=rid, ada_royalty=gained)
         return r
@@ -373,6 +402,7 @@ async def main_async(check_only: bool, resume: bool = False) -> None:
     reader = ChainReader(int(os.environ.get("LORE_CHAIN_ID", 16602)))
     tag_env = os.environ.get("E2E_TAG")
     tag = None if tag_env == "none" else (tag_env or secrets.token_hex(3))
+    say(f"run tag {tag} (rerun with E2E_TAG={tag} to reuse these demo people and wallets)")
 
     from contextlib import AsyncExitStack
 
@@ -409,8 +439,15 @@ async def main_async(check_only: bool, resume: bool = False) -> None:
         for agent in agents.values():
             await agent.create_wallet()  # the same wallet again on a rerun: one per person
         say(("self-held wallets" if local else "Turnkey wallets") + " created and linked to their people on-chain (PersonRegistry)")
-        say("funding test agents (gas + MockUSDC, testnet only)")
-        await asyncio.to_thread(fund, reader, [a.address for a in agents.values()], 60_000000)
+        say("funding test agents with 0G (testnet only)")
+        await asyncio.to_thread(fund, reader, [a.address for a in agents.values()], 5 * 10**17)
+        tokens = await asyncio.to_thread(launch_tokens, reader, list(agents))
+        payer = Account.from_key(deployer_key())
+        for name, agent in agents.items():
+            ask = await agent.tool("lore_link_token", token=tokens[name])
+            sig = payer.sign_message(encode_defunct(text=ask["sign_this"])).signature.to_0x_hex()
+            await agent.tool("lore_link_token", token=tokens[name], signature=sig)
+        say("each author's comfy token launched (MockComfy) and linked (AuthorTokens)")
         result = await Scenario(reader, agents, tag).run(resume)
         say("END-TO-END PASSED: " + json.dumps(result))
 
