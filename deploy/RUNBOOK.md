@@ -51,7 +51,7 @@ docker compose up -d --build              # reads deploy/.env (below); also buil
 
 ```sh
 LORE_PUBLIC_URL=https://<label>.malaysiawest.cloudapp.azure.com
-ZG_MODEL=glm-5.3
+ZG_MODEL=0gm-1.0-35b-a3b    # TeeML; glm-5.3 calls hung past the 5-minute limit on the Router (2026-11-07)
 TURNKEY_ORGANIZATION_ID=...  TURNKEY_API_PUBLIC_KEY=...  TURNKEY_DELEGATED_PUBLIC_KEY=...  # one per line
 WORLD_APP_ID=...  WORLD_RP_ID=...        # World ID login (spike W1)
 # or, until World ID works: leave WORLD_APP_ID empty and set
@@ -59,7 +59,7 @@ LORE_DEMO_LOGIN=1
 ```
 
 **Demo login is for testnet demos only.** Each name typed on the login page is one person, so anyone who types
-`ada` acts as ada, including spending ada's Lore wallet. Use it only with MockUSDC and small test 0G, and switch to
+`ada` acts as ada, including spending ada's Lore wallet. Use it only with small amounts of test 0G, and switch to
 World ID (set `WORLD_APP_ID`, which turns demo login off) before anyone puts real value in.
 
 The gateway binds to `127.0.0.1:8080`. Caddy (`Caddyfile`) serves it over TLS and keeps `/internal/*` private. The
@@ -90,6 +90,27 @@ contracts, whichever is faster acts first: another gateway's verifier fails subm
 
 **Turnkey's free plan caps signing.** Every user transaction is a Turnkey signature; past the quota Turnkey
 answers 429 and every chain-changing tool fails ("Turnkey didn't sign …"). Use a paid plan for anything beyond a test.
+
+## 0G mainnet (real 0G)
+
+comfy exists only on mainnet, so mainnet uses the real comfy contracts; Galileo mirrors them with `MockComfy`
+for every test. Run extensive tests on Galileo only; mainnet gets a minimal smoke run.
+
+```sh
+cd contracts
+set -a; . ./.env.mainnet; set +a          # DEPLOYER_PRIVATE_KEY: becomes admin and treasury; fund it first
+COMFY_ROUTER=0x76526f4815447F693468EF44E0204A0689178d9E \
+COMFY_POOL_MANAGER=0xAabD31f24914B48dAEA998e69683225E289d08b0 \
+COMFY_LAUNCHER=0x2F74d603f7B7D8B7BFc78ef04E09905B862bE86a COMFY_FROM_BLOCK=45552863 \
+VERIFIER=<verifier wallet> CURATOR=<curator wallet> LEAK_DETECTOR=<gateway wallet> REGISTRAR=<gateway wallet> \
+forge script script/Deploy.s.sol --rpc-url https://evmrpc.0g.ai --broadcast --slow
+python script/export_abi.py
+```
+
+Budget, at 4 gwei: about 0.05 0G to deploy (11.6M gas on Galileo), a little gas for each service wallet and its
+storage wallet, and for the smoke run one real comfy launch per test author plus a 0.1 0G stake (returned minus
+the fee when accepted) and one topic purchase. comfy addresses: `spike/comfy_c1.py`. Run the services with
+`LORE_CHAIN_ID=16661`; Turnkey wallets are created per chain (their policies pin it).
 
 ## Redeploy
 

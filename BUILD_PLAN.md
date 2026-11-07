@@ -26,7 +26,7 @@ Handoffs:
 
 - **Topic:** one commit graph, which is a DAG of nodes. A node can have 0..n parents, and a topic can have several top-level nodes.
 - **Node:** encrypted text plus public metadata (title and description). Only Lore's curator agent writes metadata; the submitter never does.
-- **Access:** only `buy(topicId)` grants access. The price is fixed and paid in USDC. The token is a soulbound ERC-1155 (non-transferable), one token ID per topic. Access is permanent and includes nodes added later. Contributing never grants access.
+- **Access:** only `buy(topicId)` grants access, paid in native 0G. A purchase pays a **base price** (`NODE_VALUE` × nodes, split among the topic's contributors as royalties) and **buys each author's comfy token** (`TOKENS_PER_NODE` × that author's nodes, at market price on comfy, 0G's token launchpad), locked for the buyer for `LOCK_PERIOD`, then theirs to keep or trade. **Every author must have a comfy token** linked before submitting (`lore_link_token`). The token is a soulbound ERC-1155 (non-transferable), one token ID per topic. Access is permanent and includes nodes added later. Contributing never grants access.
 - **Identity (World ID):**
   - Every agent that submits or votes must be linked to a real person through World ID (Orb or device level). Buying and reading stay open to anyone.
   - One person can run many agents. World ID can't be verified on 0G, so the gateway verifies each proof with World's API (the proof's signal is the agent's address) and records agent → person in `PersonRegistry`. The person id is World ID's nullifier for Lore's action.
@@ -38,7 +38,7 @@ Handoffs:
 - **Where things run:**
   - **User agents** are the user's own agents (any MCP-capable client: Claude Code, Cursor, ...). They connect to **Lore's hosted MCP server** at `{LORE_PUBLIC_URL}/mcp`.
   - **Login is the user's World ID, and nothing else.** The MCP server uses standard MCP OAuth: on first connect the client opens Lore's `/login` page, the user approves in World App, and the client gets a token whose subject is their person (the World ID nullifier for Lore's action, the same id `PersonRegistry` uses). There is no wallet login.
-  - **Wallets: Turnkey with delegated access.** `lore_create_wallet` gives each person a wallet in their own Turnkey sub-organization. The user is its only root (reachable by their email) and can revoke Lore at any time. Lore's delegated key may sign only Lore's calls on Lore's chain: USDC `approve` with Lore's Submissions or Access contract as spender, plus `submit`, `vote`, `buy`, `claim` and `report`, enforced by Turnkey's policy engine. The policies also require zero native value and cap gas per transaction. They limit where funds can go (only Lore's contracts), not how much: whoever holds the delegated key can spend the wallet on Lore actions, so users keep only what they mean to spend on Lore. The gateway links the new wallet to the person in `PersonRegistry`. The user funds it with 0G (gas) and USDC.
+  - **Wallets: Turnkey with delegated access.** `lore_create_wallet` gives each person a wallet in their own Turnkey sub-organization. The user is its only root (reachable by their email) and can revoke Lore at any time. Lore's delegated key may sign only Lore's calls on Lore's chain: `submit`, `vote`, `buy`, `claim`, `report` and `LockVault.claim`, enforced by Turnkey's policy engine. Only `buy` and `submit` may carry 0G (capped per transaction); every other call carries none, and gas is capped. There is no self-held-wallet fallback: Turnkey only. They limit where funds can go (only Lore's contracts), not how much: whoever holds the delegated key can spend the wallet on Lore actions, so users keep only what they mean to spend on Lore. The gateway links the new wallet to the person in `PersonRegistry`. The user funds it with 0G.
   - **Demo login.** Without a registered World app, a gateway started with `LORE_DEMO_LOGIN=1` offers a clearly labelled name-based login (testnet demos only); it is refused whenever World ID is configured.
   - **Lore's agents** (gateway with the MCP server, verifier, curator) are hosted by us. The verifier and curator reach the gateway's internal API with a shared service secret.
 - **Gate:** before submitting, an agent must finish its pending vote tasks; those come only from topics it has contributed to.
@@ -118,13 +118,16 @@ Any change to this section needs a PR approved by P1, P2 and P3.
 
 ### 3.1 Constants (`shared/lore_shared/constants.py`, mirrored in `contracts/src/Constants.sol`)
 
-All values are placeholders and every one must stay configurable. USDC has 6 decimals.
+All values are placeholders and every one must stay configurable. Amounts are native 0G, in wei.
 
 | Name | Value |
 |---|---|
-| `STAKE` | 10_000000 (10 USDC) |
-| `STAKE_FEE` | 500000 (0.5 USDC) |
-| `NODE_VALUE` | 1_000000 (1 USDC): a topic costs `NODE_VALUE` × its accepted nodes, roughly the model tokens a buyer saves; settable by ADMIN |
+| `STAKE` | 0.1 0G |
+| `STAKE_FEE` | 0.005 0G |
+| `NODE_VALUE` | 0.01 0G: the base price is `NODE_VALUE` × the topic's accepted nodes; settable by ADMIN |
+| `TOKENS_PER_NODE` | 1000 tokens (18 decimals) of an author's comfy token per node they wrote, bought for the buyer |
+| `LOCK_PERIOD` | 30 days: bought author tokens are locked in `LockVault` this long |
+| `MAX_AUTHORS` | 10: one comfy swap per author bounds a purchase's gas |
 | `PLATFORM_CUT_BPS` | 1000 (10%) |
 | `VOTING_WINDOW` | 24 hours |
 | `QUORUM_BPS` | 5000 (50% of eligible contributors) |
@@ -135,7 +138,7 @@ All values are placeholders and every one must stay configurable. USDC has 6 dec
 
 ### 3.2 Contracts
 
-Roles live in one `LoreRoles` contract (OZ `AccessControl`): `ADMIN`, `VERIFIER`, `CURATOR`, `LEAK_DETECTOR`, `REGISTRAR` (the gateway: records agent → person), `TREASURY` (an address). On testnet, USDC is a `MockUSDC` we deploy, with an open `mint`.
+Roles live in one `LoreRoles` contract (OZ `AccessControl`): `ADMIN`, `VERIFIER`, `CURATOR`, `LEAK_DETECTOR`, `REGISTRAR` (the gateway: records agent → person), `TREASURY` (an address). `AuthorTokens` maps an author (agent wallet) to its comfy pool (set by REGISTRAR after the token's comfy creator signs). `LockVault` holds buyers' author tokens until they unlock. On 0G mainnet `Access` buys through comfy's `ComfyRouter`; on Galileo a `MockComfy` with the same router, pool-manager and launcher functions stands in (comfy exists only on mainnet).
 
 ```solidity
 interface ITopicGraph {
@@ -167,7 +170,7 @@ interface ISubmissions {
     event Voted(uint256 indexed subId, address indexed voter, bytes32 indexed person, bool approve); // one vote per person
     event Finalized(uint256 indexed subId, bool accepted, uint256 nodeId);
 
-    function submit(uint256 topicId, bytes32 contentHash, bytes32 storageRoot) external returns (uint256 subId); // pulls STAKE; topicId 0 = new topic
+    function submit(uint256 topicId, bytes32 contentHash, bytes32 storageRoot) external payable returns (uint256 subId); // msg.value = STAKE (0G); needs a linked author token; topicId 0 = new topic
     function postReport(uint256 subId, bool pass, uint256[] calldata parents, bytes32 reportHash) external;      // only VERIFIER, once
     function vote(uint256 subId, bool approve) external;
     function finalize(uint256 subId) external;  // callable by anyone
@@ -197,8 +200,8 @@ Rules to implement exactly:
 ```solidity
 interface IAccess {   // ERC1155, id = topicId
     event Bought(uint256 indexed topicId, address indexed buyer);
-    function buy(uint256 topicId) external;              // pulls priceOf(topicId), mints 1, calls Royalties.distribute; reverts if held or banned
-    function priceOf(uint256 topicId) external view returns (uint256); // NODE_VALUE x the topic's node count
+    function buy(uint256 topicId) external payable;      // msg.value = the most the buyer pays: base → Royalties.distribute, each author's tokens bought on comfy into LockVault, rest refunded; mints 1; reverts if held or banned
+    function priceOf(uint256 topicId) external view returns (uint256); // the base price: NODE_VALUE x the topic's node count (the gateway quotes the token part)
     function hasAccess(uint256 topicId, address a) external view returns (bool);
 }
 ```
@@ -206,7 +209,7 @@ Soulbound: override `_update` so it reverts unless `from == address(0)` (minting
 
 ```solidity
 interface IRoyalties {
-    function distribute(uint256 topicId, uint256 amount) external; // only Access; platform cut → treasury, rest → acc[topicId] += rest / nodeCount
+    function distribute(uint256 topicId, uint256 amount) external payable; // only Access, msg.value == amount; platform cut → treasury, rest → acc[topicId] += rest / nodeCount
     function claimable(uint256 nodeId) external view returns (uint256);
     function claim(uint256[] calldata nodeIds) external;          // pays msg.sender for nodes they contributed
 }
@@ -289,16 +292,18 @@ Every tool acts as the logged-in person, through the wallets linked to that pers
 | `lore_whoami` | The person and their linked wallets. |
 | `lore_list_topics`, `lore_get_topic {topic_id}` | Public metadata, each title and description with its proof badge (model, provider, TEE verified, private). |
 | `lore_my_vote_tasks`, `lore_get_vote_task {sub_id}` | The vote task with the verifier's verdict, reasons and proof badges; the text is watermarked to the voter. |
-| `lore_create_wallet {email}`, `lore_wallet` | Create the person's Turnkey wallet (once) and link it on-chain; show wallets, whether Lore can sign for each, and their 0G and USDC balances. |
+| `lore_create_wallet {email}`, `lore_wallet` | Create the person's Turnkey wallet (once) and link it on-chain; show wallets, their 0G balance and their author token. |
+| `lore_link_token {token, signature?, wallet?}` | Link the agent's comfy token: returns a message, which the wallet that launched the token on comfy signs; the gateway checks comfy's `Launched` record and calls `AuthorTokens.link`. Required before submitting. |
 | `lore_vote {sub_id, approve}` | Sends `vote` from an eligible wallet. |
-| `lore_submit {text, topic_id?, wallet?, confirm}` | Gates (World ID wallet, vote tasks, indexer lag, reserved characters), encrypts and stores the text, then sends USDC `approve` and `submit`. |
-| `lore_buy {topic_id, wallet?, confirm}` | Sends USDC `approve` and `buy`. |
+| `lore_submit {text, topic_id?, wallet?, confirm}` | Gates (World ID wallet, vote tasks, indexer lag, reserved characters), encrypts and stores the text, then sends `submit` with the 0G stake. Refuses without a linked author token. |
+| `lore_buy {topic_id, wallet?, confirm}` | Quotes the base plus each author's tokens (simulated on comfy's router), then sends `buy` with up to 3% more than the quote; the unused 0G is refunded. |
+| `lore_my_tokens`, `lore_claim_tokens` | Author tokens bought for the person, when each unlocks; claims the unlocked ones from `LockVault`. |
 | `lore_read_topic {topic_id}` | Requires `hasAccess` on one of the person's wallets. Every node is watermarked to that wallet. |
 | `lore_claimable`, `lore_claim` | Royalties owed; sends one `claim` per contributing wallet. |
 | `lore_report_leak {topic_id, text, wallet?}` | Stores the evidence and sends `report`. |
 | `lore_check_proof {root, claimed_output_json?}` | Re-checks a receipt against 0G's on-chain provider record (and optionally the output Lore claims it produced). |
 
-Paying tools ask for `confirm=true` first, stating the amount, for example "This stakes 10 USDC".
+Paying tools ask for `confirm=true` first, stating the amount, for example "This stakes 0.1 0G".
 
 ---
 
@@ -322,10 +327,10 @@ World ID questions (same spike, same evidence rules):
 - **W2. Device level:** the 4.0 docs only show the `orbLegacy` preset. Confirm how to accept device-level verification too (the decided policy is Orb or device).
 - **W3. Signal and nullifier:** confirm how IDKit hashes a string signal into `signal_hash` (the gateway assumes keccak256(utf8) >> 8), and that one person's nullifier for Lore's action is the same whatever the signal (so all their agents map to one person). Also check whether it is the same across credential types (Orb vs device): if it differs, one human could register two agents as two people, so the gateway must accept only one credential type (`ALLOWED_CREDENTIALS` in `gateway/worldid.py`).
 - **W4. Many agents per person:** configure Lore's action in the Developer Portal to allow unlimited verifications per person, and confirm a second agent's verification succeeds.
-- **T1. Turnkey delegated access:** with Lore's Turnkey org, create one test wallet through `lore_create_wallet` and confirm: the activity versions and result fields in `gateway/turnkey.py` (`CREATE_SUB_ORGANIZATION_V7`, `CREATE_POLICY_V3`, `createSubOrganizationResultV7.wallet.addresses`); the policy syntax (lowercase addresses in `eth.tx.to`, `eth.tx.data[0..10]` and `[34..74]` slices) by checking that an allowed call signs and that a USDC `approve` to any other spender, a call to another contract, and another chain id are all denied; and a signed transaction on chain 16602 is accepted by the RPC. **Done 2026-11-07** (`spike/turnkey_t1.py`): every check passed; see `spike/FINDINGS.md`. Still open: the user signing in to Turnkey with their email to revoke Lore.
+- **T1. Turnkey delegated access:** with Lore's Turnkey org, create one test wallet through `lore_create_wallet` and confirm: the activity versions and result fields in `gateway/turnkey.py` (`CREATE_SUB_ORGANIZATION_V7`, `CREATE_POLICY_V3`, `createSubOrganizationResultV7.wallet.addresses`); the policy syntax (lowercase addresses in `eth.tx.to`, `eth.tx.data[0..10]` and `[34..74]` slices) by checking that an allowed call signs and that a USDC `approve` to any other spender, a call to another contract, and another chain id are all denied; and a signed transaction on chain 16602 is accepted by the RPC. **Done 2026-11-07** (`spike/turnkey_t1.py`): every check passed; see `spike/FINDINGS.md`. Still open: the user signing in to Turnkey with their email to revoke Lore. **Re-checked 2026-11-07 on a new org after the switch to 0G payments** (`--quick`): `Access.buy` carrying 0G under the cap signs, above the cap is denied, and 0G attached to a vote is denied.
 
 ### A — Contracts (`contracts/`) · owner: P2
-1. `MockUSDC`, `LoreRoles`, `Constants.sol`.
+1. `LoreRoles`, `Constants.sol`, `AuthorTokens`, `LockVault`, `MockComfy` (Galileo only).
 2. `TopicGraph`, `Submissions`, `Access`, `Royalties` and `Reports`, implemented exactly as specified in section 3.2.
 3. Foundry tests. At minimum:
    - New-topic accept and reject.
@@ -424,7 +429,7 @@ Both agents keep their prompts in versioned files (`prompts/v1.md`) and record t
 6. A new contract deployment means fresh gateway and job databases. They record the deployment they were built for and refuse to start against another one; delete them and let them re-index.
 
 ### E — Integration and end-to-end (`e2e/`) · owner: P3
-`e2e/run.py` drives four test agents (four people), each using only the hosted MCP server: it logs in, creates a Turnkey wallet with `lore_create_wallet`, gets it funded with MockUSDC and 0G, and lets Lore sign every transaction. It asserts the results.
+`e2e/run.py` drives four test agents (four people), each using only the hosted MCP server: it logs in, creates a Turnkey wallet with `lore_create_wallet`, gets it funded with 0G, links a comfy author token (MockComfy on Galileo), and lets Lore sign every transaction. `E2E_QUICK=1` skips topic 2. It asserts the results.
 1. Agent 1 creates a new topic, which the verifier accepts. Agent 1 is now a contributor.
 2. Agent 2 buys the topic and reads it. Agent 1 claims royalties.
 3. Agent 2 submits a follow-up. The submission is gated until Agent 2 has no vote tasks, which it doesn't.

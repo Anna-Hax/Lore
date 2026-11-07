@@ -1,6 +1,12 @@
 # Proposal: topics priced by their authors' comfy tokens
 
-Status: **proposal, needs P1 + P2 + P3 approval**. It changes `BUILD_PLAN.md` section 3, the frozen interfaces, and replaces the unintegrated dynamic-pricing model in `shared/PRICING.md`.
+Status: **built and deployed on Galileo (2026-11-07)**; `BUILD_PLAN.md` section 3 now describes it. Not yet on 0G mainnet.
+
+**What changed from this proposal while building it:** there is no price oracle. comfy's router buys an exact amount and refunds what it didn't need, so `Access.buy` pays each author's tokens at the live market price out of the buyer's own `msg.value` (their maximum). The gateway only quotes, by simulating each purchase on the router. That removed the `PRICE_ORACLE` role and its trust assumption.
+
+**Evidence:** 90 Foundry tests; `ComfyFork.t.sol` buys real comfy tokens on a 0G mainnet fork; the Galileo e2e run passed (stakes in 0G, a purchase that locked three authors' tokens for the buyer, the leak trace and a royalty claim); spike T1 `--quick` confirmed the Turnkey value cap.
+
+The original proposal follows. It changes `BUILD_PLAN.md` section 3, the frozen interfaces, and replaces the unintegrated dynamic-pricing model in `shared/PRICING.md`.
 
 ## 1. The model
 

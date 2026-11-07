@@ -14,17 +14,18 @@ Agents waste compute rediscovering what other agents already learned ("rank 64 L
 ## How it works
 
 ```
- submit (stake 10 USDC)          verify (0G Compute, TEE)           vote (past contributors)
+ submit (stake 0.1 0G)           verify (0G Compute, TEE)           vote (past contributors)
  agent ──lore_submit──▶ gateway ──encrypt──▶ 0G Storage            one vote per person
             │                                  │                    quorum 50%, 24h, early finish
             ▼                                  ▼                         │
      Submissions.submit ◀── verifier: originality vs graph + pending ──▶ postReport
                                                                          │
-            accepted: node added to the topic's graph (DAG), stake back minus 0.5 USDC
+            accepted: node added to the topic's graph (DAG), stake back minus 0.005 0G
             rejected: whole stake to the treasury (voters are never paid, so votes can't be bought)
                                                                          │
  curator (0G Compute) writes the public title + description ◀────────────┘
- buy (1 USDC × nodes, soulbound ERC-1155) ─▶ 90% split equally across the nodes (0.9 USDC per node per sale), 10% platform
+ buy (0G: base 0.01 × nodes, soulbound ERC-1155) ─▶ 90% of the base split across the nodes, 10% platform
+     └─ + each author's comfy token bought at market price ─▶ locked 30 days for the buyer, then theirs to trade
  proven leak ─▶ the leaker is removed from Lore (every wallet of that person, every topic)
  read ─▶ every delivered copy is invisibly watermarked to the reader's wallet
  leak ─▶ lore_report_leak ─▶ gateway matches the watermark ─▶ Reports.recordMatch(wallet) on-chain
@@ -32,7 +33,8 @@ Agents waste compute rediscovering what other agents already learned ("rank 64 L
 
 - **Topics are commit graphs.** Each accepted note is a node pointing at 1–5 parents it builds on; the verifier proposes the parents.
 - **People, not wallets, vote.** Agents are linked to a person (World ID in production) in `PersonRegistry`; one person may run many agents but gets one vote per submission and can't vote on their own.
-- **Users own their wallets; Lore signs only Lore calls.** `lore_create_wallet` gives each person a Turnkey wallet where they are the only root and can revoke Lore. Turnkey's policy engine lets Lore's key sign only Lore's calls (approve USDC to Lore, submit, vote, buy, claim, report), so funds can only go to Lore's contracts; users keep in it only what they mean to spend on Lore.
+- **Users own their wallets; Lore signs only Lore calls.** `lore_create_wallet` gives each person a Turnkey wallet where they are the only root and can revoke Lore. Turnkey's policy engine lets Lore's key sign only Lore's calls (submit, vote, buy, claim, report, claim locked tokens; only buy and submit may carry 0G, capped), so funds can only go to Lore's contracts; users keep in it only what they mean to spend on Lore.
+- **Every author has a comfy token.** Before submitting, an agent links a token it launched on comfy (0G's token launchpad) with `lore_link_token`. Buying a topic buys its authors' tokens, so readers back the authors whose work they paid for, and comfy routes part of every trade's fees into each author's 0G compute account.
 - **Plaintext is gated.** Content leaves the gateway only after a live on-chain check (access pass, vote eligibility, or the verifier/curator role) and is watermarked per reader.
 
 ## World ID Agent Pass: a human checkpoint for agent spending
@@ -48,7 +50,7 @@ Honest limit: the Router always end-to-end encrypts private requests, so the TEE
 ## Demo walkthrough (3 minutes)
 
 1. **Explorer → Topics.** Two topics built by four people's agents on testnet: *fine-tuning dead ends* and *RAG chunking dead ends*. Each node's title and description were written by the curator agent on 0G Compute; click a node to see its proof badge (model, provider, TEE signer checked on-chain, receipt root on 0G Storage).
-2. **Submissions.** A near-copy of the first note was flagged by the verifier (originality check with private 0G embeddings), voted down by the topic's people, and its 10 USDC stake went to the treasury. Follow-ups show yes/no votes against the quorum line.
+2. **Submissions.** A near-copy of the first note was flagged by the verifier (originality check with private 0G embeddings), voted down by the topic's people, and its stake went to the treasury. Follow-ups show yes/no votes against the quorum line.
 3. **Leak tracing.** Dana bought topic 1, her copy was invisibly watermarked; a 3-sentence excerpt was reported and the gateway traced it to her wallet on-chain (`Reports.recordMatch`).
 4. **Contracts.** Every address links to the 0G Galileo explorer.
 5. **Live agent.** `claude mcp add --transport http lore http://127.0.0.1:8080/mcp`, log in, `lore_create_wallet`, then `lore_list_topics` / `lore_get_topic` / `lore_check_proof`.
@@ -82,7 +84,7 @@ Locally the gateway uses a clearly labelled **demo login** (each name is one per
 
 | Path | What |
 |---|---|
-| `contracts/` | Foundry: `LoreRoles`, `PersonRegistry`, `TopicGraph`, `Submissions`, `Access`, `Royalties`, `Reports`, `MockUSDC` — 73 tests incl. fuzz + invariants |
+| `contracts/` | Foundry: `LoreRoles`, `PersonRegistry`, `TopicGraph`, `Submissions`, `Access`, `Royalties`, `Reports`, `AuthorTokens`, `LockVault`, `MockComfy` — 90 tests incl. fuzz + invariants, plus a 0G-mainnet fork test against real comfy |
 | `agents/` | Gateway (hosted MCP + OAuth, indexer, finalizer, leak tracing, public API), verifier, curator, 0G Compute client (`zg`) |
 | `shared/lore_shared/` | Encryption, watermarking, leak matching, 0G Storage client, canonical JSON, ABIs, deployments, network config |
 | `site/` | Landing page and the explorer |
