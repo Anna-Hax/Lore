@@ -1,4 +1,4 @@
-import { hosted, loggedIn, login } from './mcp-client.js?v=11';
+import { hosted, loggedIn, login } from './mcp-client.js?v=12';
 
 const action = document.getElementById('loginAction');
 const description = document.getElementById('loginDescription');

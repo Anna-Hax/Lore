@@ -6,7 +6,10 @@ const read = key => { try { return JSON.parse(sessionStorage.getItem(key)); } ca
 const save = (key, value) => sessionStorage.setItem(key, JSON.stringify(value));
 const b64 = bytes => btoa(String.fromCharCode(...bytes)).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
 const random = () => b64(crypto.getRandomValues(new Uint8Array(32)));
-export const hosted = () => location.pathname.startsWith('/app/');
+/* A gateway serves the site under /app/; any other non-loopback host (Vercel) proxies the gateway's paths (vercel.json).
+   Loopback without /app/ is the static preview (python -m http.server). */
+export const gatewayOrigin = () => location.pathname.startsWith('/app/') || !['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
+export const hosted = gatewayOrigin;
 export const loggedIn = () => Boolean(read(SESSION)?.access_token);
 /* The OAuth client this tab registered, so the workspace can mark "this browser" among your agents. */
 export const clientId = () => read(SESSION)?.client_id || null;
@@ -15,6 +18,8 @@ export function sameOrigin(url) {
   if (u.origin !== location.origin || u.username || u.password) throw new Error('The gateway returned an unexpected address.');
   return u.href;
 }
+/* The gateway's OAuth metadata names its own public URL; behind the Vercel proxy, use the same path on this origin. */
+const here = url => new URL(new URL(url).pathname, location.origin).href;
 async function json(url, options = {}) {
   const r = await fetch(sameOrigin(url), { ...options, cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(30000) });
   const d = await r.json();
@@ -29,7 +34,7 @@ export async function login() {
   if (!hosted()) throw new Error('Open this workspace on your Lore gateway to log in.');
   const metadata = await json('/.well-known/oauth-authorization-server');
   const redirect = new URL('workspace.html', location.href).href.split(/[?#]/)[0];
-  const client = await json(metadata.registration_endpoint, {
+  const client = await json(here(metadata.registration_endpoint), {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ client_name: 'Lore web workspace', redirect_uris: [redirect],
       grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'],
@@ -37,9 +42,9 @@ export async function login() {
   });
   const verifier = random(), state = random();
   const challenge = b64(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier))));
-  const endpoint = sameOrigin(metadata.token_endpoint);
+  const endpoint = here(metadata.token_endpoint);
   save(PENDING, { verifier, state, client_id: client.client_id, redirect, endpoint, route: location.hash, created: Date.now() });
-  const url = new URL(sameOrigin(metadata.authorization_endpoint));
+  const url = new URL(here(metadata.authorization_endpoint));
   url.search = new URLSearchParams({ client_id: client.client_id, redirect_uri: redirect,
     response_type: 'code', scope: 'lore', state, code_challenge: challenge, code_challenge_method: 'S256', resource: `${location.origin}/mcp` });
   location.assign(url);

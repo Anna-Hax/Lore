@@ -1,0 +1,11 @@
+{
+  "rewrites": [
+    { "source": "/mcp", "destination": "https://lore-4097bd.malaysiawest.cloudapp.azure.com/mcp" },
+    { "source": "/api/:path*", "destination": "https://lore-4097bd.malaysiawest.cloudapp.azure.com/api/:path*" },
+    { "source": "/.well-known/:path*", "destination": "https://lore-4097bd.malaysiawest.cloudapp.azure.com/.well-known/:path*" },
+    { "source": "/authorize", "destination": "https://lore-4097bd.malaysiawest.cloudapp.azure.com/authorize" },
+    { "source": "/token", "destination": "https://lore-4097bd.malaysiawest.cloudapp.azure.com/token" },
+    { "source": "/register", "destination": "https://lore-4097bd.malaysiawest.cloudapp.azure.com/register" },
+    { "source": "/revoke", "destination": "https://lore-4097bd.malaysiawest.cloudapp.azure.com/revoke" }
+  ]
+}
