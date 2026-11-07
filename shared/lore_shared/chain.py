@@ -12,8 +12,14 @@ def load_deployment(chain_id: int) -> dict:
     return json.loads(files("lore_shared").joinpath(f"deployments/{chain_id}.json").read_text())
 
 
+# comfy's router, pool manager and launcher: MockComfy has the same functions and Launched event (spike C1).
+COMFY_ABI = {"ComfyRouter": "MockComfy", "ComfyPoolManager": "MockComfy", "ComfyLauncher": "MockComfy"}
+
+
 def load_abi(name: str) -> list:
-    if name not in {"Access", "LoreRoles", "Reports", "Royalties", "Submissions", "TopicGraph", "MockUSDC", "PersonRegistry"}:
+    name = COMFY_ABI.get(name, name)
+    if name not in {"Access", "LoreRoles", "Reports", "Royalties", "Submissions", "TopicGraph", "PersonRegistry",
+                    "AuthorTokens", "LockVault", "MockComfy"}:
         raise ValueError("unknown Lore contract")
     return json.loads(files("lore_shared").joinpath(f"abi/{name}.json").read_text())
 
@@ -26,7 +32,7 @@ class ChainReader:
         self.deployment = load_deployment(chain_id)
         self.web3 = web3 or Web3(Web3.HTTPProvider(rpc_url or get_network(chain_id).rpc_url, request_kwargs={"timeout": 20}))
         self.contracts = {
-            name: self.web3.eth.contract(address=Web3.to_checksum_address(address), abi=load_abi("MockUSDC" if name == "USDC" else name))
+            name: self.web3.eth.contract(address=Web3.to_checksum_address(address), abi=load_abi(name))
             for name, address in self.deployment["contracts"].items()
         }
 
@@ -47,8 +53,10 @@ class ChainReader:
                 raise ValueError(f"missing deployed code: {name}")
         wiring = [
             ("Access", "graph", "TopicGraph"), ("Access", "royalties", "Royalties"),
-            ("Access", "usdc", "USDC"), ("Submissions", "graph", "TopicGraph"),
-            ("Submissions", "usdc", "USDC"), ("Royalties", "graph", "TopicGraph"),
+            ("Access", "authorTokens", "AuthorTokens"), ("Access", "vault", "LockVault"),
+            ("Access", "router", "ComfyRouter"), ("Submissions", "graph", "TopicGraph"),
+            ("Submissions", "authorTokens", "AuthorTokens"), ("Royalties", "graph", "TopicGraph"),
+            ("LockVault", "access", "Access"), ("AuthorTokens", "poolManager", "ComfyPoolManager"),
             ("Royalties", "access", "Access"), ("Reports", "graph", "TopicGraph"),
             ("TopicGraph", "registry", "PersonRegistry"), ("PersonRegistry", "roles", "LoreRoles"),
         ]

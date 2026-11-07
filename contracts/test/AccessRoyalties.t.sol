@@ -15,14 +15,15 @@ contract AccessTest is Base {
     function test_buy_mintsAndGrantsAccess() public {
         (uint256 t,) = _newTopic(alice);
         assertFalse(access.hasAccess(t, buyer));
-        _fund(buyer, PRICE);
+        uint256 cost = _cost(t);
+        _fund(buyer, cost);
         vm.expectEmit(address(access));
         emit IAccess.Bought(t, buyer);
         vm.prank(buyer);
-        access.buy(t);
+        access.buy{value: cost}(t);
         assertTrue(access.hasAccess(t, buyer));
         assertEq(access.balanceOf(buyer, t), 1);
-        assertEq(usdc.balanceOf(buyer), 0);
+        assertEq(_bal(buyer), 0);
     }
 
     function test_buy_secondBuyReverts() public {
@@ -70,23 +71,23 @@ contract AccessTest is Base {
         assertTrue(access.hasAccess(t, buyer)); // access is per topic, not per node
     }
 
-    function test_setNodeValue_onlyAdmin() public {
+    function test_setParams_onlyAdmin() public {
         vm.prank(buyer);
         vm.expectRevert(LoreBase.NotAuthorized.selector);
-        access.setNodeValue(1);
+        access.setParams(1, 1, 1);
     }
 
     function test_price_isNodeValueTimesNodes() public {
         (uint256 t,) = _newTopic(alice);
-        assertEq(access.priceOf(t), 1_000000);
+        assertEq(access.priceOf(t), PRICE);
         _addNode(makeAddr("bob"), t);
         _addNode(makeAddr("carol"), t);
-        assertEq(access.priceOf(t), 3_000000);
-        access.setNodeValue(2_000000);
-        assertEq(access.priceOf(t), 6_000000);
-        uint256 before = usdc.balanceOf(address(royalties));
+        assertEq(access.priceOf(t), 3 * PRICE);
+        access.setParams(2 * PRICE, access.tokensPerNode(), access.maxAuthors());
+        assertEq(access.priceOf(t), 6 * PRICE);
+        uint256 before = _bal(address(royalties));
         _buy(buyer, t);
-        assertEq(usdc.balanceOf(address(royalties)) - before, 6_000000 - 600000); // treasury took the 10% cut
+        assertEq(_bal(address(royalties)) - before, 6 * PRICE - 6 * PRICE / 10); // treasury took the 10% cut
     }
 
     function test_eachNodeEarnsNinetyPercentOfNodeValuePerSale() public {
@@ -94,9 +95,9 @@ contract AccessTest is Base {
         uint256 n2 = _addNode(makeAddr("bob"), t);
         uint256 n3 = _addNode(makeAddr("carol"), t);
         _buy(buyer, t);
-        assertEq(royalties.claimable(n1), 900000);
-        assertEq(royalties.claimable(n2), 900000);
-        assertEq(royalties.claimable(n3), 900000);
+        assertEq(royalties.claimable(n1), PRICE * 9 / 10);
+        assertEq(royalties.claimable(n2), PRICE * 9 / 10);
+        assertEq(royalties.claimable(n3), PRICE * 9 / 10);
     }
 }
 
@@ -113,9 +114,9 @@ contract RoyaltiesTest is Base {
 
     function test_sale_splitsCutAndNodes() public {
         (uint256 t, uint256 n1) = _newTopic(alice);
-        uint256 tBefore = usdc.balanceOf(treasury);
+        uint256 tBefore = _bal(treasury);
         _buy(makeAddr("b1"), t);
-        assertEq(usdc.balanceOf(treasury) - tBefore, PRICE / 10); // 10% cut, no dust
+        assertEq(_bal(treasury) - tBefore, PRICE / 10); // 10% cut, no dust
         assertEq(royalties.claimable(n1), PRICE * 9 / 10);
     }
 
@@ -125,36 +126,36 @@ contract RoyaltiesTest is Base {
         uint256 n2 = _addNode(bob, t);
         assertEq(royalties.claimable(n2), 0);
         _buy(makeAddr("b2"), t); // 2 nodes: price 2, 0.9 each
-        assertEq(royalties.claimable(n1), 900000 + 900000);
-        assertEq(royalties.claimable(n2), 900000);
+        assertEq(royalties.claimable(n1), 2 * (PRICE * 9 / 10));
+        assertEq(royalties.claimable(n2), PRICE * 9 / 10);
     }
 
     function test_dustToTreasury() public {
-        access.setNodeValue(7);
+        access.setParams(7, access.tokensPerNode(), access.maxAuthors());
         (uint256 t, uint256 n1) = _newTopic(alice);
         uint256 n2 = _addNode(bob, t);
         uint256 n3 = _addNode(makeAddr("carol"), t);
-        uint256 tBefore = usdc.balanceOf(treasury);
+        uint256 tBefore = _bal(treasury);
         _buy(makeAddr("b1"), t);
         // price 21; cut floor(2.1) = 2; rest 19; per node 6; dust 1
-        assertEq(usdc.balanceOf(treasury) - tBefore, 3);
+        assertEq(_bal(treasury) - tBefore, 3);
         assertEq(royalties.claimable(n1), 6);
         assertEq(royalties.claimable(n2), 6);
         assertEq(royalties.claimable(n3), 6);
-        assertEq(usdc.balanceOf(address(royalties)), 18);
+        assertEq(_bal(address(royalties)), 18);
     }
 
     function test_claim_paysContributorOnce() public {
         (uint256 t, uint256 n1) = _newTopic(alice);
         _buy(makeAddr("b1"), t);
-        uint256 before = usdc.balanceOf(alice);
+        uint256 before = _bal(alice);
         vm.prank(alice);
         royalties.claim(_arr(n1, n1)); // duplicate id pays once
-        assertEq(usdc.balanceOf(alice) - before, 900000); // 1 node: 90% of 1 USDC
+        assertEq(_bal(alice) - before, PRICE * 9 / 10); // 1 node: 90% of its base price
         assertEq(royalties.claimable(n1), 0);
         vm.prank(alice);
         royalties.claim(_arr(n1)); // nothing left, no revert
-        assertEq(usdc.balanceOf(alice) - before, 900000); // 1 node: 90% of 1 USDC
+        assertEq(_bal(alice) - before, PRICE * 9 / 10); // 1 node: 90% of its base price
     }
 
     function test_claim_notContributorReverts() public {
@@ -172,7 +173,7 @@ contract RoyaltiesTest is Base {
         (uint256 t, uint256 n1) = _newTopic(alice);
         uint256 n2 = _addNode(alice, t);
         _buy(makeAddr("b1"), t);
-        assertEq(royalties.claimableMany(_arr(n1, n2)), 1_800000); // 2 nodes: price 2, 0.9 each
+        assertEq(royalties.claimableMany(_arr(n1, n2)), 2 * (PRICE * 9 / 10)); // 2 nodes: 90% of the base each
     }
 
     function test_setPlatformCut_guard() public {

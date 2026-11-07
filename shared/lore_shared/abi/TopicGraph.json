@@ -491,6 +491,30 @@
   },
   {
     "type": "function",
+    "name": "topicAuthors",
+    "inputs": [
+      {
+        "name": "topicId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "authors",
+        "type": "address[]",
+        "internalType": "address[]"
+      },
+      {
+        "name": "nodeCounts",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "topicCount",
     "inputs": [],
     "outputs": [

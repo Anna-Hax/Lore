@@ -14,7 +14,7 @@ from web3.exceptions import TimeExhausted
 
 from gateway.service import LoreError, Service
 from gateway.signer import Signer
-from gateway.turnkey import MAX_GAS, RETRY_WINDOW_MS, Turnkey, TurnkeyError, lore_policies, unsigned_eip1559
+from gateway.turnkey import MAX_GAS, MAX_VALUE_WEI, RETRY_WINDOW_MS, Turnkey, TurnkeyError, lore_policies, unsigned_eip1559
 from tests.fakes import FakeChain, FakeContent, FakeStorage
 
 USER = "0x" + "ab" * 20
@@ -101,17 +101,17 @@ def test_create_wallet_runs_the_delegated_access_setup_in_order_and_replays_exac
     assert [b for p, _, b in again if "/submit/" in p] == submits
 
 
-def test_policies_pin_chain_contracts_selectors_and_the_usdc_spender():
-    contracts = {n: "0x" + c * 40 for n, c in zip(("USDC", "Submissions", "Access", "Royalties", "Reports"), "abcde")}
-    sels = {"USDC.approve": "0x095ea7b3", "Submissions.submit": "0x11111111", "Submissions.vote": "0x22222222",
-            "Access.buy": "0x33333333", "Royalties.claim": "0x44444444", "Reports.report": "0x55555555"}
-    ps = lore_policies("u-lore", 16602, contracts, sels)
-    assert len(ps) == 7 and all(p["condition"].startswith(f"eth.tx.chain_id == 16602 && eth.tx.value == 0 && "
-                                                        f"eth.tx.gas <= {MAX_GAS} && ") for p in ps)
-    assert all(p["consensus"] == "approvers.any(user, user.id == 'u-lore')" for p in ps)
-    approves = [p["condition"] for p in ps if "0x095ea7b3" in p["condition"]]
-    assert len(approves) == 2 and any("b" * 40 in c for c in approves) and any("c" * 40 in c for c in approves)
-    assert all("eth.tx.data[34..74]" in c for c in approves)  # the spender is pinned
+def test_policies_pin_chain_contracts_selectors_and_value():
+    contracts = {n: "0x" + c * 40 for n, c in zip(("Submissions", "Access", "Royalties", "Reports", "LockVault"), "abcde")}
+    sels = {"Submissions.submit": "0x11111111", "Submissions.vote": "0x22222222", "Access.buy": "0x33333333",
+            "Royalties.claim": "0x44444444", "Reports.report": "0x55555555", "LockVault.claim": "0x66666666"}
+    ps = {p["policyName"]: p["condition"] for p in lore_policies("u-lore", 16602, contracts, sels)}
+    assert len(ps) == 6 and all(c.startswith(f"eth.tx.chain_id == 16602 && eth.tx.gas <= {MAX_GAS} && ")
+                                for c in ps.values())
+    for call, cond in ps.items():  # 0G leaves the wallet only in a purchase or a stake, capped
+        paying = call in ("Lore: Access.buy", "Lore: Submissions.submit")
+        assert (f"eth.tx.value <= {MAX_VALUE_WEI}" in cond) == paying and ("eth.tx.value == 0" in cond) != paying
+    assert "eth.tx.to == '0x" + "b" * 40 + "'" in ps["Lore: Access.buy"] and "0x33333333" in ps["Lore: Access.buy"]
 
 
 def test_sign_transaction_returns_the_signed_raw_tx_and_surfaces_denials():
@@ -196,7 +196,7 @@ def test_signer_refuses_unmanaged_wallets_and_reports_reverts_and_missing_funds(
         s.send(PREPARED)
     with pytest.raises(LoreError, match="reverted"):
         signer(FakeW3(status=0))[0].send(PREPARED)
-    with pytest.raises(LoreError, match="funded with 0G"):
+    with pytest.raises(LoreError, match="funded with enough 0G"):
         signer(FakeW3(estimate_error=ValueError("insufficient funds")))[0].send(PREPARED)
 
 

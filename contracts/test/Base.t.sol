@@ -3,7 +3,10 @@ pragma solidity ^0.8.24;
 
 import {Test} from "forge-std/Test.sol";
 import {LoreRoles} from "../src/LoreRoles.sol";
-import {MockUSDC} from "../src/MockUSDC.sol";
+import {MockComfy} from "../src/MockComfy.sol";
+import {AuthorTokens} from "../src/AuthorTokens.sol";
+import {LockVault} from "../src/LockVault.sol";
+import {IComfyRouter, IComfyPoolManager} from "../src/interfaces/IComfy.sol";
 import {TopicGraph} from "../src/TopicGraph.sol";
 import {Submissions} from "../src/Submissions.sol";
 import {Access} from "../src/Access.sol";
@@ -16,7 +19,9 @@ import {Constants} from "../src/Constants.sol";
 /// @notice Full deployment wired the same way as script/Deploy.s.sol, plus flow helpers.
 abstract contract Base is Test {
     LoreRoles roles;
-    MockUSDC usdc;
+    MockComfy comfy;
+    AuthorTokens authorTokens;
+    LockVault vault;
     TopicGraph graph;
     Submissions subs;
     Access access;
@@ -33,7 +38,8 @@ abstract contract Base is Test {
 
     uint256 constant STAKE = Constants.STAKE;
     uint256 constant FEE = Constants.STAKE_FEE;
-    uint256 constant PRICE = Constants.NODE_VALUE; // the price of a one-node topic
+    uint256 constant PRICE = Constants.NODE_VALUE; // the base price of a one-node topic
+    uint256 constant TOKEN_PRICE = 0.0001 ether; // every test author's comfy token: 0G per whole token
     uint256 constant WINDOW = Constants.VOTING_WINDOW;
 
     uint256 private _salt;
@@ -41,11 +47,13 @@ abstract contract Base is Test {
     function setUp() public virtual {
         vm.warp(1_700_000_000);
         roles = new LoreRoles(admin, treasury);
-        usdc = new MockUSDC();
+        comfy = new MockComfy();
         graph = new TopicGraph(roles);
-        royalties = new Royalties(roles, usdc, graph);
-        subs = new Submissions(roles, usdc, graph);
-        access = new Access(roles, usdc, graph, royalties);
+        royalties = new Royalties(roles, graph);
+        subs = new Submissions(roles, graph);
+        authorTokens = new AuthorTokens(roles, IComfyPoolManager(address(comfy)));
+        vault = new LockVault(roles);
+        access = new Access(roles, graph, royalties, authorTokens, vault, IComfyRouter(address(comfy)));
         reports = new Reports(roles, graph);
         registry = new PersonRegistry(roles);
 
@@ -53,6 +61,8 @@ abstract contract Base is Test {
         graph.setRoyalties(address(royalties));
         graph.setRegistry(address(registry));
         royalties.setAccess(address(access));
+        subs.setAuthorTokens(address(authorTokens));
+        vault.setAccess(address(access));
         roles.grantRole(roles.VERIFIER_ROLE(), verifier);
         roles.grantRole(roles.CURATOR_ROLE(), curator);
         roles.grantRole(roles.LEAK_DETECTOR_ROLE(), detector);
@@ -62,11 +72,30 @@ abstract contract Base is Test {
     // ---------- helpers ----------
 
     function _fund(address who, uint256 amount) internal {
-        usdc.mint(who, amount);
-        vm.startPrank(who);
-        usdc.approve(address(subs), type(uint256).max);
-        usdc.approve(address(access), type(uint256).max);
-        vm.stopPrank();
+        vm.deal(who, who.balance + amount);
+    }
+
+    function _bal(address who) internal view returns (uint256) {
+        return who.balance;
+    }
+
+    /// @dev Unless it has one, `who` launches a token on the mock comfy and the registrar links it.
+    function _ensureToken(address who) internal {
+        if (authorTokens.tokenOf(who) != address(0)) return;
+        vm.prank(who);
+        (bytes32 poolId,) = comfy.launch("Author", "AUTH", TOKEN_PRICE);
+        vm.prank(registrar);
+        authorTokens.link(who, poolId);
+    }
+
+    /// @dev Everything a buyer pays for `topicId`: base plus each author's tokens at the mock price and fee.
+    function _cost(uint256 topicId) internal view returns (uint256 total) {
+        total = access.priceOf(topicId);
+        (, uint256[] memory amounts) = access.basket(topicId);
+        for (uint256 i; i < amounts.length; ++i) {
+            uint256 c = (amounts[i] * TOKEN_PRICE + 1e18 - 1) / 1e18;
+            total += c + (c * comfy.FEE_BPS() + 9999) / 10_000;
+        }
     }
 
     /// @dev Unless already registered, `who` becomes its own person: one agent per person by default.
@@ -89,10 +118,11 @@ abstract contract Base is Test {
     }
 
     function _submit(address who, uint256 topicId) internal returns (uint256 subId) {
-        if (usdc.balanceOf(who) < STAKE) _fund(who, STAKE * 10);
+        if (who.balance < STAKE) _fund(who, STAKE * 10);
         _ensurePerson(who);
+        _ensureToken(who);
         vm.prank(who);
-        subId = subs.submit(topicId, _hash(), keccak256("root"));
+        subId = subs.submit{value: STAKE}(topicId, _hash(), keccak256("root"));
     }
 
     function _report(uint256 subId, bool pass, uint256[] memory parents) internal {
@@ -146,9 +176,10 @@ abstract contract Base is Test {
     }
 
     function _buy(address who, uint256 topicId) internal {
-        if (usdc.balanceOf(who) < access.priceOf(topicId)) _fund(who, access.priceOf(topicId) * 10);
+        uint256 cost = _cost(topicId);
+        if (who.balance < cost) _fund(who, cost);
         vm.prank(who);
-        access.buy(topicId);
+        access.buy{value: cost}(topicId);
     }
 
     function _status(uint256 subId) internal view returns (ISubmissions.Status) {

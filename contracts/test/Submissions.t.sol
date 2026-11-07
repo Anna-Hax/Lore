@@ -15,6 +15,8 @@ contract SubmissionsTest is Base {
         super.setUp();
         _ensurePerson(alice); // World ID: needed to submit, and to vote
         _ensurePerson(bob);
+        _ensureToken(alice); // a comfy token: needed to submit
+        _ensureToken(bob);
     }
 
     // ---------- submit ----------
@@ -22,19 +24,19 @@ contract SubmissionsTest is Base {
     function test_submit_pullsStake() public {
         _fund(alice, STAKE);
         vm.prank(alice);
-        uint256 subId = subs.submit(0, keccak256("x"), keccak256("root"));
+        uint256 subId = subs.submit{value: STAKE}(0, keccak256("x"), keccak256("root"));
         assertEq(subId, 1);
-        assertEq(usdc.balanceOf(alice), 0);
-        assertEq(usdc.balanceOf(address(subs)), STAKE);
+        assertEq(_bal(alice), 0);
+        assertEq(_bal(address(subs)), STAKE);
         assertEq(uint8(_status(subId)), uint8(ISubmissions.Status.Pending));
     }
 
     function test_submit_exactDuplicateReverts() public {
         _fund(alice, STAKE * 2);
         vm.startPrank(alice);
-        subs.submit(0, keccak256("x"), keccak256("root"));
+        subs.submit{value: STAKE}(0, keccak256("x"), keccak256("root"));
         vm.expectRevert(abi.encodeWithSelector(Submissions.DuplicateContent.selector, keccak256("x")));
-        subs.submit(0, keccak256("x"), keccak256("root2"));
+        subs.submit{value: STAKE}(0, keccak256("x"), keccak256("root2"));
         vm.stopPrank();
     }
 
@@ -42,7 +44,7 @@ contract SubmissionsTest is Base {
         _fund(alice, STAKE);
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(Submissions.UnknownTopic.selector, 7));
-        subs.submit(7, keccak256("x"), keccak256("root"));
+        subs.submit{value: STAKE}(7, keccak256("x"), keccak256("root"));
     }
 
     // ---------- postReport ----------
@@ -107,9 +109,9 @@ contract SubmissionsTest is Base {
         assertEq(graph.nodeCount(1), 1);
         assertEq(graph.contributorSince(1, alice), block.timestamp);
         assertEq(graph.contributorCount(1), 1);
-        assertEq(usdc.balanceOf(alice), STAKE * 10 - FEE);
-        assertEq(usdc.balanceOf(treasury), FEE);
-        assertEq(usdc.balanceOf(address(subs)), 0);
+        assertEq(_bal(alice), STAKE * 10 - FEE);
+        assertEq(_bal(treasury), FEE);
+        assertEq(_bal(address(subs)), 0);
     }
 
     function test_newTopic_reject() public {
@@ -118,8 +120,8 @@ contract SubmissionsTest is Base {
         subs.finalize(subId);
         assertEq(uint8(_status(subId)), uint8(ISubmissions.Status.Rejected));
         assertEq(graph.topicCount(), 0);
-        assertEq(usdc.balanceOf(treasury), STAKE); // no voters on a new topic
-        assertEq(usdc.balanceOf(alice), STAKE * 9);
+        assertEq(_bal(treasury), STAKE); // no voters on a new topic
+        assertEq(_bal(alice), STAKE * 9);
     }
 
     function test_newTopic_noVoting() public {
@@ -222,7 +224,7 @@ contract SubmissionsTest is Base {
         vm.warp(block.timestamp + WINDOW);
         subs.finalize(subId);
         assertEq(uint8(_status(subId)), uint8(ISubmissions.Status.Rejected));
-        assertEq(usdc.balanceOf(address(subs)), 0);
+        assertEq(_bal(address(subs)), 0);
     }
 
     function test_existing_beforeWindow_undecidedReverts() public {
@@ -353,25 +355,25 @@ contract SubmissionsTest is Base {
         _vote(c[1], subId, false);
         _vote(c[2], subId, false); // early: no = 3 > 2
         _vote(c[3], subId, true);
-        uint256 treasuryBefore = usdc.balanceOf(treasury);
+        uint256 treasuryBefore = _bal(treasury);
         uint256[] memory votersBefore = new uint256[](4);
-        for (uint256 i; i < 4; ++i) votersBefore[i] = usdc.balanceOf(c[i]);
+        for (uint256 i; i < 4; ++i) votersBefore[i] = _bal(c[i]);
 
         subs.finalize(subId);
 
         assertEq(uint256(subs.getSubmission(subId).status), uint256(ISubmissions.Status.Rejected));
-        assertEq(usdc.balanceOf(treasury) - treasuryBefore, STAKE);
-        for (uint256 i; i < 4; ++i) assertEq(usdc.balanceOf(c[i]), votersBefore[i]);
-        assertEq(usdc.balanceOf(address(subs)), 0);
+        assertEq(_bal(treasury) - treasuryBefore, STAKE);
+        for (uint256 i; i < 4; ++i) assertEq(_bal(c[i]), votersBefore[i]);
+        assertEq(_bal(address(subs)), 0);
     }
 
     function test_reject_byVerifierWithoutVotes_sendsWholeStakeToTreasury() public {
         uint256 subId = _submit(alice, 0); // new topic: verifier decides alone
         _report(subId, false);
-        uint256 before = usdc.balanceOf(treasury);
+        uint256 before = _bal(treasury);
         subs.finalize(subId);
-        assertEq(usdc.balanceOf(treasury) - before, STAKE);
-        assertEq(usdc.balanceOf(address(subs)), 0);
+        assertEq(_bal(treasury) - before, STAKE);
+        assertEq(_bal(address(subs)), 0);
     }
 
     // ---------- params ----------
@@ -380,9 +382,9 @@ contract SubmissionsTest is Base {
         uint256 subId = _submit(alice, 0);
         subs.setParams(20e6, 1e6, 1 hours, 6000);
         _report(subId, true);
-        uint256 before = usdc.balanceOf(alice);
+        uint256 before = _bal(alice);
         subs.finalize(subId);
-        assertEq(usdc.balanceOf(alice) - before, STAKE - FEE); // old stake and fee
+        assertEq(_bal(alice) - before, STAKE - FEE); // old stake and fee
     }
 
     function test_setParams_guards() public {

@@ -8,11 +8,6 @@
         "internalType": "contract LoreRoles"
       },
       {
-        "name": "usdc_",
-        "type": "address",
-        "internalType": "contract IERC20"
-      },
-      {
         "name": "graph_",
         "type": "address",
         "internalType": "contract TopicGraph"
@@ -138,7 +133,7 @@
       }
     ],
     "outputs": [],
-    "stateMutability": "nonpayable"
+    "stateMutability": "payable"
   },
   {
     "type": "function",
@@ -222,19 +217,6 @@
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "usdc",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "contract IERC20"
-      }
-    ],
-    "stateMutability": "view"
   },
   {
     "type": "event",
@@ -331,6 +313,27 @@
   },
   {
     "type": "error",
+    "name": "FailedCall",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InsufficientBalance",
+    "inputs": [
+      {
+        "name": "balance",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "needed",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "InvalidParam",
     "inputs": []
   },
@@ -352,12 +355,17 @@
   },
   {
     "type": "error",
-    "name": "SafeERC20FailedOperation",
+    "name": "WrongAmount",
     "inputs": [
       {
-        "name": "token",
-        "type": "address",
-        "internalType": "address"
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "sent",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ]
   },

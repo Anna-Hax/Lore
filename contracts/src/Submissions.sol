@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {Address} from "@openzeppelin/contracts/utils/Address.sol";
+import {AuthorTokens} from "./AuthorTokens.sol";
 import {ISubmissions} from "./interfaces/ILore.sol";
 import {LoreBase} from "./LoreBase.sol";
 import {LoreRoles} from "./LoreRoles.sol";
@@ -11,7 +11,6 @@ import {Constants} from "./Constants.sol";
 
 /// @notice Staked submissions: verifier report, contributor vote, finalize. Rules from BUILD_PLAN.md section 3.2.
 contract Submissions is ISubmissions, LoreBase {
-    using SafeERC20 for IERC20;
 
     struct Submission {
         uint256 topicId; // 0 = new topic
@@ -36,8 +35,9 @@ contract Submissions is ISubmissions, LoreBase {
     uint8 internal constant VOTE_YES = 1;
     uint8 internal constant VOTE_NO = 2;
 
-    IERC20 public immutable usdc;
     TopicGraph public immutable graph;
+    /// @notice Every author must have a comfy token linked before submitting.
+    AuthorTokens public authorTokens;
 
     uint256 public stake = Constants.STAKE;
     uint256 public stakeFee = Constants.STAKE_FEE;
@@ -51,6 +51,7 @@ contract Submissions is ISubmissions, LoreBase {
     mapping(uint256 => mapping(bytes32 => uint8)) public voteOf;
 
     event ParamsSet(uint256 stake, uint256 stakeFee, uint256 votingWindow, uint256 quorumBps);
+    event AuthorTokensSet(address authorTokens);
 
     error UnknownTopic(uint256 topicId);
     error UnknownSubmission(uint256 subId);
@@ -64,14 +65,21 @@ contract Submissions is ISubmissions, LoreBase {
     error NotFinalizable();
     error NotRegistered(address agent);
     error Banned(address agent);
+    error NoAuthorToken(address agent);
+    error WrongStake(uint256 stake, uint256 sent);
 
-    constructor(LoreRoles roles_, IERC20 usdc_, TopicGraph graph_) LoreBase(roles_) {
-        if (address(usdc_) == address(0) || address(graph_) == address(0)) revert ZeroAddress();
-        usdc = usdc_;
+    constructor(LoreRoles roles_, TopicGraph graph_) LoreBase(roles_) {
+        if (address(graph_) == address(0)) revert ZeroAddress();
         graph = graph_;
     }
 
     // ---------- admin ----------
+
+    function setAuthorTokens(address a) external onlyAdmin {
+        if (a == address(0)) revert ZeroAddress();
+        authorTokens = AuthorTokens(a);
+        emit AuthorTokensSet(a);
+    }
 
     /// @notice quorumBps must be >= 50%: early finalize relies on "one side alone above quorum" meaning
     ///         that side already holds a strict majority of every eligible voter, so the result can't change.
@@ -95,10 +103,15 @@ contract Submissions is ISubmissions, LoreBase {
     // ---------- flow ----------
 
     /// @inheritdoc ISubmissions
-    function submit(uint256 topicId, bytes32 contentHash, bytes32 storageRoot) external returns (uint256 subId) {
+    /// @dev Send exactly `stake` 0G with the call.
+    function submit(uint256 topicId, bytes32 contentHash, bytes32 storageRoot) external payable returns (uint256 subId) {
         if (topicId != 0 && !graph.topicExists(topicId)) revert UnknownTopic(topicId);
         if (_personOf(msg.sender) == bytes32(0)) revert NotRegistered(msg.sender); // World ID first
         if (graph.registry().isBanned(msg.sender)) revert Banned(msg.sender);
+        if (address(authorTokens) == address(0) || authorTokens.tokenOf(msg.sender) == address(0)) {
+            revert NoAuthorToken(msg.sender);
+        }
+        if (msg.value != stake) revert WrongStake(stake, msg.value);
         if (contentHashUsed[contentHash]) revert DuplicateContent(contentHash);
         contentHashUsed[contentHash] = true;
 
@@ -111,7 +124,6 @@ contract Submissions is ISubmissions, LoreBase {
         s.stake = stake;
         s.fee = stakeFee;
 
-        usdc.safeTransferFrom(msg.sender, address(this), s.stake);
         emit Submitted(subId, topicId, msg.sender, contentHash, storageRoot);
     }
 
@@ -160,13 +172,14 @@ contract Submissions is ISubmissions, LoreBase {
             s.status = Status.Accepted;
             (, uint256 nodeId) = graph.addNode(s.topicId, s.submitter, s.contentHash, s.storageRoot, s.parents);
             s.nodeId = nodeId;
-            if (s.stake - s.fee > 0) usdc.safeTransfer(s.submitter, s.stake - s.fee);
-            if (s.fee > 0) usdc.safeTransfer(treasury, s.fee);
+            // ponytail: a submitter contract that rejects 0G blocks only its own finalize. Pull payments if needed.
+            if (s.stake - s.fee > 0) Address.sendValue(payable(s.submitter), s.stake - s.fee);
+            if (s.fee > 0) Address.sendValue(payable(treasury), s.fee);
             emit Finalized(subId, true, nodeId);
         } else {
             s.status = Status.Rejected;
             // The whole stake goes to the platform. Voters are never paid, so no vote is bought.
-            if (s.stake > 0) usdc.safeTransfer(treasury, s.stake);
+            if (s.stake > 0) Address.sendValue(payable(treasury), s.stake);
             emit Finalized(subId, false, 0);
         }
     }

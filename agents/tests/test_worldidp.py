@@ -86,7 +86,7 @@ def env(tmp_path):
 
 
 def start_checkpoint(env):
-    held = env.svc.checkpoint(env.alice, "pay 5 USDC for topic 1", env.svc.prepare_buy(env.alice, 1))
+    held = env.svc.checkpoint(env.alice, "pay 5 0G for topic 1", env.svc.prepare_buy(env.alice, 1))
     assert held["human_approval_required"] and env.svc.signer.txs == []  # nothing signed yet
     cid = held["checkpoint_id"]
     r = env.client.get(f"/checkpoint/{cid}/start", follow_redirects=False)
@@ -104,10 +104,10 @@ def test_approved_checkpoint_sends_once(env):
     cid, url = start_checkpoint(env)
     assert callback(env, env.fake.approve(url)).status_code == 200
     out = env.svc.continue_action(env.alice, cid)
-    assert out["status"] == "sent" and [t["description"] for t in env.svc.signer.txs] == ["USDC.approve", "Access.buy"]
+    assert out["status"] == "sent" and [t["description"] for t in env.svc.signer.txs] == ["Access.buy"]
     with pytest.raises(LoreError, match="used"):
         env.svc.continue_action(env.alice, cid)  # single use
-    assert len(env.svc.signer.txs) == 2
+    assert len(env.svc.signer.txs) == 1
 
 
 def test_pending_checkpoint_sends_nothing(env):
@@ -217,9 +217,9 @@ DAVE = _Account.create()
 def test_self_held_wallet_gets_unsigned_transactions_and_no_checkpoint(env):
     with env.svc.tx() as conn:
         conn.execute("DELETE FROM turnkey_wallets")  # alice's wallet is now one Lore holds no key for
-    out = env.svc.checkpoint(env.alice, "pay 1 USDC for topic 1", env.svc.prepare_buy(env.alice, 1))
+    out = env.svc.checkpoint(env.alice, "pay 1 0G for topic 1", env.svc.prepare_buy(env.alice, 1))
     assert out["sign_locally"] and "human_approval_required" not in out
-    assert [t["description"] for t in out["transactions"]] == ["USDC.approve", "Access.buy"]
+    assert [t["description"] for t in out["transactions"]] == ["Access.buy"]
     assert env.svc.signer.txs == []  # Lore signed nothing
 
 

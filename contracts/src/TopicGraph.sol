@@ -34,6 +34,8 @@ contract TopicGraph is ITopicGraph, LoreBase {
     mapping(uint256 => uint256[]) private _topicNodes;
     mapping(uint256 => mapping(address => uint64)) private _contributorSince;
     mapping(uint256 => uint256) private _contributorCount;
+    mapping(uint256 => address[]) private _authors; // topicId => contributors, in order of first node
+    mapping(uint256 => mapping(address => uint256)) private _authorNodes; // topicId => contributor => nodes
     mapping(uint256 => mapping(bytes32 => uint64)) private _personSince;
     mapping(uint256 => uint256) private _personCount;
 
@@ -119,7 +121,9 @@ contract TopicGraph is ITopicGraph, LoreBase {
         if (_contributorSince[topicIdOut][contributor] == 0) {
             _contributorSince[topicIdOut][contributor] = uint64(block.timestamp);
             _contributorCount[topicIdOut]++;
+            _authors[topicIdOut].push(contributor);
         }
+        _authorNodes[topicIdOut][contributor]++;
         if (_personSince[topicIdOut][person] == 0) {
             _personSince[topicIdOut][person] = uint64(block.timestamp);
             _personCount[topicIdOut]++;
@@ -179,6 +183,15 @@ contract TopicGraph is ITopicGraph, LoreBase {
 
     function topicNodes(uint256 topicId) external view returns (uint256[] memory) {
         return _topicNodes[topicId];
+    }
+
+    /// @notice The topic's authors and how many nodes each wrote: what a buyer receives author tokens for.
+    function topicAuthors(uint256 topicId) external view returns (address[] memory authors, uint256[] memory nodeCounts) {
+        authors = _authors[topicId];
+        nodeCounts = new uint256[](authors.length);
+        for (uint256 i; i < authors.length; ++i) {
+            nodeCounts[i] = _authorNodes[topicId][authors[i]];
+        }
     }
 
     /// @inheritdoc ITopicGraph

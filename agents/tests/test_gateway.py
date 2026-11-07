@@ -100,7 +100,8 @@ def test_contributor_must_vote_before_submitting(env):
     assert env.svc.vote_tasks(person(BOB)) == []  # never on your own submission
     env.ev("Voted", subId=2, voter=ALICE.address, person=B32(person(ALICE)), approve=True)
     assert env.svc.vote_tasks(person(ALICE)) == []
-    assert env.svc.prepare_submit(person(ALICE), "alice again", 1)["transactions"][1]["description"] == "Submissions.submit"
+    tx = env.svc.prepare_submit(person(ALICE), "alice again", 1)["transactions"]
+    assert [t["description"] for t in tx] == ["Submissions.submit"] and tx[0]["value"] == env.chain.stake()  # 0G stake
 
 
 def test_one_vote_per_person_across_their_wallets(env):
@@ -181,7 +182,8 @@ def test_with_several_wallets_the_person_must_choose(env):
     with pytest.raises(LoreError, match="isn't linked"):
         env.svc.prepare_buy(person(ALICE), 1, wallet=BOB.address)
     tx = env.svc.prepare_buy(person(ALICE), 1, wallet=second.address)["transactions"]
-    assert [t["description"] for t in tx] == ["USDC.approve", "Access.buy"] and tx[1]["from"] == second.address.lower()
+    assert [t["description"] for t in tx] == ["Access.buy"] and tx[0]["from"] == second.address.lower()
+    assert tx[0]["value"] == (env.chain.price + env.chain.token_cost) * 103 // 100  # the quote plus 3% slippage
 
 
 # --- reading ---
@@ -550,8 +552,8 @@ def test_paying_tools_send_their_transactions_through_the_signer(env):
         conn.execute("INSERT INTO turnkey_wallets (person, email, created_ms, address, sub_org, ready)"
                      " VALUES (?, 'a@example.com', 0, ?, 'sub-a', 1)", (person(ALICE), ALICE.address.lower()))
     out = env.svc.send(env.svc.prepare_buy(person(ALICE), 1))
-    assert out["tx_hashes"] == ["0xhash0", "0xhash1"] and "transactions" not in out
-    assert [t["description"] for t in env.svc.signer.txs] == ["USDC.approve", "Access.buy"]
+    assert out["tx_hashes"] == ["0xhash0"] and "transactions" not in out
+    assert [t["description"] for t in env.svc.signer.txs] == ["Access.buy"]
 
 
 def test_a_banned_person_cannot_start_a_submission_or_purchase(env):

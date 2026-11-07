@@ -3,11 +3,14 @@ pragma solidity ^0.8.24;
 
 /// @notice Default values from BUILD_PLAN.md section 3.1, mirrored in shared/lore_shared/constants.py (P3).
 /// @dev These are only the initial values. Every on-chain one is stored in its contract and
-///      settable by ADMIN, so changing a value never needs a redeploy. USDC has 6 decimals.
+///      settable by ADMIN, so changing a value never needs a redeploy. Every amount is native 0G, in wei.
 library Constants {
-    uint256 internal constant STAKE = 10_000000; // 10 USDC
-    uint256 internal constant STAKE_FEE = 500000; // 0.5 USDC
-    uint256 internal constant NODE_VALUE = 1_000000; // 1 USDC per node: a topic costs NODE_VALUE x its nodes
+    uint256 internal constant STAKE = 0.1 ether; // 0.1 0G
+    uint256 internal constant STAKE_FEE = 0.005 ether; // 0.005 0G
+    uint256 internal constant NODE_VALUE = 0.01 ether; // base price: a topic's base costs NODE_VALUE x its nodes
+    uint256 internal constant TOKENS_PER_NODE = 1000 ether; // a buyer gets this many of an author's tokens per node
+    uint256 internal constant LOCK_PERIOD = 30 days; // bought author tokens stay locked this long
+    uint256 internal constant MAX_AUTHORS = 10; // one comfy swap each (~204k gas): bounds a purchase's gas
     uint256 internal constant PLATFORM_CUT_BPS = 1000; // 10%
     uint256 internal constant VOTING_WINDOW = 24 hours;
     uint256 internal constant QUORUM_BPS = 5000; // 50% of eligible contributors

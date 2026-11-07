@@ -8,11 +8,6 @@
         "internalType": "contract LoreRoles"
       },
       {
-        "name": "usdc_",
-        "type": "address",
-        "internalType": "contract IERC20"
-      },
-      {
         "name": "graph_",
         "type": "address",
         "internalType": "contract TopicGraph"
@@ -21,9 +16,41 @@
         "name": "royalties_",
         "type": "address",
         "internalType": "contract Royalties"
+      },
+      {
+        "name": "authorTokens_",
+        "type": "address",
+        "internalType": "contract AuthorTokens"
+      },
+      {
+        "name": "vault_",
+        "type": "address",
+        "internalType": "contract LockVault"
+      },
+      {
+        "name": "router_",
+        "type": "address",
+        "internalType": "contract IComfyRouter"
       }
     ],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "receive",
+    "stateMutability": "payable"
+  },
+  {
+    "type": "function",
+    "name": "authorTokens",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract AuthorTokens"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -75,6 +102,30 @@
   },
   {
     "type": "function",
+    "name": "basket",
+    "inputs": [
+      {
+        "name": "topicId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "tokens",
+        "type": "address[]",
+        "internalType": "address[]"
+      },
+      {
+        "name": "amounts",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "buy",
     "inputs": [
       {
@@ -84,7 +135,7 @@
       }
     ],
     "outputs": [],
-    "stateMutability": "nonpayable"
+    "stateMutability": "payable"
   },
   {
     "type": "function",
@@ -149,6 +200,19 @@
   },
   {
     "type": "function",
+    "name": "maxAuthors",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "nodeValue",
     "inputs": [],
     "outputs": [
@@ -188,6 +252,19 @@
         "name": "",
         "type": "address",
         "internalType": "contract LoreRoles"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "router",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract IComfyRouter"
       }
     ],
     "stateMutability": "view"
@@ -291,10 +368,20 @@
   },
   {
     "type": "function",
-    "name": "setNodeValue",
+    "name": "setParams",
     "inputs": [
       {
-        "name": "value",
+        "name": "nodeValue_",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "tokensPerNode_",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxAuthors_",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -336,6 +423,19 @@
   },
   {
     "type": "function",
+    "name": "tokensPerNode",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "uri",
     "inputs": [
       {
@@ -355,13 +455,13 @@
   },
   {
     "type": "function",
-    "name": "usdc",
+    "name": "vault",
     "inputs": [],
     "outputs": [
       {
         "name": "",
         "type": "address",
-        "internalType": "contract IERC20"
+        "internalType": "contract LockVault"
       }
     ],
     "stateMutability": "view"
@@ -393,6 +493,43 @@
   },
   {
     "type": "event",
+    "name": "AuthorTokensBought",
+    "inputs": [
+      {
+        "name": "topicId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "buyer",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "token",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "paid",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "Bought",
     "inputs": [
       {
@@ -412,10 +549,59 @@
   },
   {
     "type": "event",
-    "name": "NodeValueSet",
+    "name": "Paid",
     "inputs": [
       {
-        "name": "value",
+        "name": "topicId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "buyer",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "base",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "tokens",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "refund",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ParamsSet",
+    "inputs": [
+      {
+        "name": "nodeValue",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "tokensPerNode",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxAuthors",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -642,8 +828,40 @@
   },
   {
     "type": "error",
+    "name": "FailedCall",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InsufficientBalance",
+    "inputs": [
+      {
+        "name": "balance",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "needed",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "InvalidParam",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NoAuthorToken",
+    "inputs": [
+      {
+        "name": "author",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
   },
   {
     "type": "error",
@@ -652,18 +870,49 @@
   },
   {
     "type": "error",
-    "name": "SafeERC20FailedOperation",
+    "name": "ReentrancyGuardReentrantCall",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "Soulbound",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TooManyAuthors",
     "inputs": [
       {
-        "name": "token",
-        "type": "address",
-        "internalType": "address"
+        "name": "authors",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "max",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ]
   },
   {
     "type": "error",
-    "name": "Soulbound",
+    "name": "Underpaid",
+    "inputs": [
+      {
+        "name": "needed",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "sent",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "UnexpectedNative",
     "inputs": []
   },
   {
