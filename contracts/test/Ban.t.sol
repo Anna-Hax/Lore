@@ -33,7 +33,7 @@ contract BanTest is Base {
         assertTrue(registry.isBanned(leaker) && registry.isBanned(leaker2));
         assertFalse(access.hasAccess(t1, leaker));
         assertFalse(access.hasAccess(t2, leaker2)); // the other wallet of the same person
-        _fund(leaker2, 100_000000);
+        _fund(leaker2, 10 ether);
         vm.prank(leaker2);
         vm.expectRevert(abi.encodeWithSelector(Access.Banned.selector, leaker2));
         access.buy(t1);
@@ -63,10 +63,10 @@ contract BanTest is Base {
         vm.expectRevert(abi.encodeWithSelector(Submissions.Banned.selector, leaker));
         subs.vote(sub, true);
 
-        _fund(leaker, 100_000000);
+        _fund(leaker, 10 ether);
         vm.prank(leaker);
         vm.expectRevert(abi.encodeWithSelector(Submissions.Banned.selector, leaker));
-        subs.submit(t, keccak256("leaker-new"), keccak256("root"));
+        subs.submit{value: STAKE}(t, keccak256("leaker-new"), keccak256("root"));
     }
 
     function test_unlinkedWalletCanBeBannedOnItsOwn() public {

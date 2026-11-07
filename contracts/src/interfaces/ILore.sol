@@ -51,7 +51,7 @@ interface ISubmissions {
     event Voted(uint256 indexed subId, address indexed voter, bytes32 indexed person, bool approve); // one vote per person
     event Finalized(uint256 indexed subId, bool accepted, uint256 nodeId);
 
-    function submit(uint256 topicId, bytes32 contentHash, bytes32 storageRoot) external returns (uint256 subId); // pulls STAKE; topicId 0 = new topic
+    function submit(uint256 topicId, bytes32 contentHash, bytes32 storageRoot) external payable returns (uint256 subId); // msg.value = stake (0G); needs a linked author token; topicId 0 = new topic
     function postReport(uint256 subId, bool pass, uint256[] calldata parents, bytes32 reportHash) external; // only VERIFIER, once
     function vote(uint256 subId, bool approve) external;
     function finalize(uint256 subId) external; // callable by anyone
@@ -61,13 +61,13 @@ interface IAccess {
     // ERC1155, id = topicId
     event Bought(uint256 indexed topicId, address indexed buyer);
 
-    function buy(uint256 topicId) external; // pulls priceOf(topicId), mints 1, calls Royalties.distribute; reverts if held or banned
-    function priceOf(uint256 topicId) external view returns (uint256); // nodeValue x the topic's node count
+    function buy(uint256 topicId) external payable; // msg.value = max 0G: base to Royalties, buys authors' comfy tokens into the LockVault, refunds the rest; reverts if held or banned
+    function priceOf(uint256 topicId) external view returns (uint256); // the base price: nodeValue x the topic's node count
     function hasAccess(uint256 topicId, address a) external view returns (bool);
 }
 
 interface IRoyalties {
-    function distribute(uint256 topicId, uint256 amount) external; // only Access
+    function distribute(uint256 topicId, uint256 amount) external payable; // only Access, msg.value == amount
     function claimable(uint256 nodeId) external view returns (uint256);
     function claim(uint256[] calldata nodeIds) external; // pays msg.sender for nodes they contributed
 }
