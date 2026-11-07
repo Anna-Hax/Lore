@@ -67,4 +67,4 @@ No client secret ever reaches the browser or the agent: it lives in the gateway'
 
 ## Configuration
 
-`deploy/secrets/public.env` (git-ignored): `WORLD_IDP_ISSUER`, `WORLD_IDP_CLIENT_ID`, `WORLD_IDP_ACR` (`orb,orb-face` by default; `selfie,selfie-face` once enabled; `any`), `LORE_TLS_PORT=8443`. `deploy/secrets/gateway.env`: `WORLD_IDP_CLIENT_SECRET`. Register `https://localhost:8443/login/callback` (or your HTTPS host) as a callback in `https://auth.world.org/portal`. While World IdP is configured, the demo login is off.
+`deploy/secrets/public.env` (git-ignored): `WORLD_IDP_ISSUER`, `WORLD_IDP_CLIENT_ID`, `WORLD_IDP_ACR` (`orb,orb-face`, the default; Lore accepts Orb only and does not use Selfie Check), `LORE_TLS_PORT=8443`. `deploy/secrets/gateway.env`: `WORLD_IDP_CLIENT_SECRET`. Register `https://localhost:8443/login/callback` (or your HTTPS host) as a callback in `https://auth.world.org/portal`. While World IdP is configured, the demo login is off.

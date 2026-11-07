@@ -201,9 +201,10 @@ def test_credential_class_setting():
     from gateway.worldidp import ACCEPTED_ACR, parse_acr
 
     assert parse_acr(None) == ACCEPTED_ACR and parse_acr("any") is None
-    assert parse_acr("selfie, selfie-face") == ("https://world.org/oidc/acr/selfie", "https://world.org/oidc/acr/selfie-face")
-    with pytest.raises(ValueError):
-        parse_acr("passport")
+    assert parse_acr("orb, orb-face") == ("https://world.org/oidc/acr/orb", "https://world.org/oidc/acr/orb-face")
+    for not_accepted in ("selfie", "selfie-face", "orb,selfie", "passport"):  # Lore is Orb-only
+        with pytest.raises(ValueError):
+            parse_acr(not_accepted)
 
 
 # --- the local-signing fallback: a self-held wallet signs its own transactions, so no checkpoint applies ---
