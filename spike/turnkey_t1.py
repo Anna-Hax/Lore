@@ -4,10 +4,10 @@ Creates ONE test wallet exactly the way lore_create_wallet does (gateway/turnkey
   - the activity versions and result fields work (the wallet gets created at all);
   - a retry with the same start time replays the same activities (same sub-org, no second wallet);
   - Lore's delegated user is found by whoami, and only the test user is left in the root quorum;
-  - Turnkey's policy engine signs Lore's calls (USDC approve to Access, Submissions.vote) and the signature
-    recovers to the wallet, and denies: approve to any other spender, another contract, another chain id,
+  - Turnkey's policy engine signs Lore's calls (Access.buy with 0G, Submissions.vote) and the signature
+    recovers to the wallet, and denies: 0G above the cap or sent elsewhere, another contract, another chain id,
     native value, and gas above MAX_GAS;
-  - with --broadcast: the signed approve is accepted on chain 16602 (fund the printed address with testnet 0G).
+  - with --broadcast: a signed Royalties.claim is accepted on chain 16602 (fund the printed address with testnet 0G).
 
 Secrets come from .env.turnkey at the repo root (gitignored, never printed):
   TURNKEY_ORGANIZATION_ID, TURNKEY_API_PUBLIC_KEY, TURNKEY_API_PRIVATE_KEY   Lore's parent-org API key (dashboard)
@@ -38,7 +38,7 @@ from eth_account import Account  # noqa: E402
 from chain import Chain  # noqa: E402
 from gateway.service import POLICY_CALLS  # noqa: E402
 from gateway.signer import Signer  # noqa: E402
-from gateway.turnkey import MAX_GAS, RETRY_WINDOW_MS, Turnkey, TurnkeyError, lore_policies, unsigned_eip1559  # noqa: E402
+from gateway.turnkey import MAX_GAS, MAX_VALUE_WEI, RETRY_WINDOW_MS, Turnkey, TurnkeyError, lore_policies, unsigned_eip1559  # noqa: E402
 
 ENV, STATE = ROOT / ".env.turnkey", ROOT / "spike" / "local-evidence" / "turnkey-t1.json"
 RESULT = STATE.with_name("turnkey-t1-result.json")
@@ -72,7 +72,7 @@ def load_env() -> dict:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--broadcast", action="store_true", help="also send the allowed approve on 16602")
+    parser.add_argument("--broadcast", action="store_true", help="also send a harmless Royalties.claim on 16602")
     args = parser.parse_args()
     env = load_env()
     tk = Turnkey(env["TURNKEY_ORGANIZATION_ID"], (env["TURNKEY_API_PUBLIC_KEY"], env["TURNKEY_API_PRIVATE_KEY"]),
@@ -127,20 +127,18 @@ def main() -> None:
             check(path, False, f"query failed: {e}")
 
     # 3. Policy engine: what Lore's key may and may not sign.
-    price = chain.topic_price()
-    usdc, access = chain.c["USDC"], contracts["Access"]
     base = {"chainId": CHAIN_ID, "nonce": 0, "gas": 100_000, "maxPriorityFeePerGas": 10**9, "maxFeePerGas": 10**10,
             "value": 0, "accessList": []}
-    approve = {**base, "to": contracts["USDC"], "data": usdc.encode_abi("approve", args=[access, price])}
+    buy = {**base, "to": contracts["Access"], "value": 10**16, "data": chain.c["Access"].encode_abi("buy", args=[1])}
     vote = {**base, "to": contracts["Submissions"], "data": chain.c["Submissions"].encode_abi("vote", args=[1, True])}
     cases = {
-        "allow: USDC.approve(Access)": (approve, True),
+        "allow: Access.buy with 0G": (buy, True),
         "allow: Submissions.vote": (vote, True),
-        "deny: USDC.approve(other spender)": ({**approve, "data": usdc.encode_abi("approve", args=[OTHER, price])}, False),
-        "deny: USDC.transfer": ({**approve, "data": usdc.encode_abi("transfer", args=[OTHER, 1])}, False),
-        "deny: approve calldata sent to another contract": ({**approve, "to": OTHER}, False),
-        "deny: another chain id": ({**approve, "chainId": 1}, False),
-        "deny: native value": ({**vote, "value": 1}, False),
+        "deny: Access.buy above MAX_VALUE_WEI": ({**buy, "value": MAX_VALUE_WEI + 1}, False),
+        "deny: plain 0G transfer elsewhere": ({**base, "to": OTHER, "value": 1, "data": "0x"}, False),
+        "deny: Lore's calldata sent to another contract": ({**buy, "to": OTHER}, False),
+        "deny: another chain id": ({**buy, "chainId": 1}, False),
+        "deny: 0G attached to a vote": ({**vote, "value": 1}, False),
         "deny: gas above MAX_GAS": ({**vote, "gas": MAX_GAS + 1}, False),
     }
     for name, (tx, allowed) in cases.items():
@@ -158,11 +156,12 @@ def main() -> None:
             check("broadcast", False, f"fund {address} with a little Galileo 0G (https://faucet.0g.ai), then rerun")
         else:
             signer = Signer(chain, tk, lambda a: sub if a.lower() == address.lower() else None)
-            prepared = chain.prepare("USDC", "approve", chain.w3.to_checksum_address(address), access, price)
+            # a claim with nothing owed: no 0G at risk, and the call succeeds for any wallet
+            prepared = chain.prepare("Royalties", "claim", chain.w3.to_checksum_address(address), [])
             try:
-                check("broadcast: approve mined on 16602", True, {"tx": signer.send(prepared)})
+                check("broadcast: Royalties.claim mined on 16602", True, {"tx": signer.send(prepared)})
             except Exception as e:  # noqa: BLE001
-                check("broadcast: approve mined on 16602", False, str(e))
+                check("broadcast: Royalties.claim mined on 16602", False, str(e))
     else:
         print(f"(skipped broadcast: fund {address} with Galileo 0G and rerun with --broadcast)")
     finish(results, ok)
