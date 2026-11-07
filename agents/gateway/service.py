@@ -291,6 +291,53 @@ class Service:
             conn.execute("UPDATE checkpoints SET tx_hashes=? WHERE id=?", (json.dumps(out.get("tx_hashes")), cid))
         return {"status": "sent", "action": r["action"], **out}
 
+    def my_approvals(self, person: str, limit: int = 20) -> list[dict]:
+        """This person's own agent-action approvals, newest first (the public overview only shows anonymised ones)."""
+        with self.tx() as conn:
+            ids = [r[0] for r in conn.execute("SELECT id FROM checkpoints WHERE person=? ORDER BY created DESC LIMIT ?",
+                                              (person, limit))]
+        out = []
+        for cid in ids:
+            r = self.checkpoint_row(cid)  # applies expiry
+            out.append({"checkpoint_id": r["id"], "action": r["action"], "status": r["status"], "created": r["created"],
+                        "decided": r["decided"], "reason": r["reason"],
+                        "approve_url": f"{self.approve_base}/checkpoint/{r['id']}" if self.approve_base else None})
+        return out
+
+    def my_topics(self, person: str) -> dict:
+        """Topics this person can read (any of their wallets holds the pass, checked live) and topics they built."""
+        with self.tx() as conn:
+            mine = self.wallets(conn, person)
+            bought = {r[0] for r in conn.execute(
+                f"SELECT DISTINCT topic_id FROM purchases WHERE buyer IN ({','.join('?' * len(mine))})", mine)} if mine else set()
+            built = {r[0] for r in conn.execute(
+                f"SELECT DISTINCT topic_id FROM nodes WHERE contributor IN ({','.join('?' * len(mine))})", mine)} if mine else set()
+        owned = sorted(t for t in bought if any(self.chain.has_access(t, w) for w in mine))  # a ban removes access
+        return {"owned": owned, "contributed": sorted(built)}
+
+    def my_agents(self, person: str) -> list[dict]:
+        """MCP clients (agents, and Lore's own web app) holding a live login for this person."""
+        with self.tx() as conn:
+            rows = conn.execute("SELECT t.client_id, MAX(t.expires) AS expires, c.info, c.created FROM oauth_tokens t"
+                                " LEFT JOIN oauth_clients c ON c.client_id=t.client_id"
+                                " WHERE t.person=? AND t.expires > ? GROUP BY t.client_id ORDER BY c.created DESC",
+                                (person, self.now())).fetchall()
+        out = []
+        for r in rows:
+            try:
+                name = json.loads(r["info"] or "{}").get("client_name")
+            except ValueError:
+                name = None
+            out.append({"client_id": r["client_id"], "name": name or "MCP client", "created": r["created"],
+                        "expires": r["expires"]})
+        return out
+
+    def revoke_agent(self, person: str, client_id: str) -> dict:
+        """Log one MCP client out for this person (its access and refresh tokens). Other people are untouched."""
+        with self.tx() as conn:
+            n = conn.execute("DELETE FROM oauth_tokens WHERE person=? AND client_id=?", (person, client_id)).rowcount
+        return {"revoked": n}
+
     def recent_checkpoints(self, limit: int = 20) -> list[dict]:
         with self.tx() as conn:
             rows = conn.execute("SELECT id, action, status, created, decided, reason FROM checkpoints"
@@ -553,14 +600,18 @@ class Service:
             edges = conn.execute("SELECT child, parent FROM edges").fetchall()
             subs = conn.execute("SELECT * FROM submissions ORDER BY id").fetchall()
             votes = conn.execute("SELECT sub_id, approve, COUNT(*) AS n FROM votes GROUP BY sub_id, approve").fetchall()
-            buys = conn.execute("SELECT topic_id, COUNT(*) AS n FROM purchases GROUP BY topic_id").fetchall()
+            buys = conn.execute("SELECT topic_id, buyer FROM purchases").fetchall()
             persons = {r[0]: r[1] for r in conn.execute("SELECT agent, person FROM persons")}
             reports = conn.execute("SELECT * FROM reports ORDER BY id").fetchall()
         parents: dict[int, list[int]] = {}
         for e in edges:
             parents.setdefault(e["child"], []).append(e["parent"])
         tally = {(v["sub_id"], v["approve"]): v["n"] for v in votes}
-        bought = {b["topic_id"]: b["n"] for b in buys}
+        buyers_by_topic: dict[int, set] = {}  # people, not wallets: one person with two wallets is one buyer
+        for b in buys:
+            buyers_by_topic.setdefault(b["topic_id"], set()).add(persons.get(b["buyer"], b["buyer"]))
+        bought = {t: len(people) for t, people in buyers_by_topic.items()}
+        topic_of_node = {n["id"]: n["topic_id"] for n in nodes}
         people_by_topic: dict[int, set] = {}
         for n in nodes:
             people_by_topic.setdefault(n["topic_id"], set()).add(persons.get(n["contributor"], n["contributor"]))
@@ -578,7 +629,9 @@ class Service:
                       "title": m(n["meta_json"]).get("title"), "description": m(n["meta_json"]).get("description"),
                       "parents": sorted(parents.get(n["id"], [])),
                       "proof": self.proof_summary(m(n["meta_json"]).get("receipt"))} for n in nodes]
-        out_subs = [{"sub_id": x["id"], "topic_id": x["topic_id"], "submitter": x["submitter"], "status": x["status"],
+        out_subs = [{"sub_id": x["id"], "submitter": x["submitter"], "status": x["status"],
+                     # a new-topic submission is recorded with topic 0; once accepted its node knows the real topic
+                     "topic_id": x["topic_id"] or topic_of_node.get(x["node_id"]) or 0,
                      "verifier_pass": None if x["passed"] is None else bool(x["passed"]),
                      "yes": tally.get((x["id"], 1), 0), "no": tally.get((x["id"], 0), 0), "eligible": x["eligible"],
                      "node_id": x["node_id"], "parents": json.loads(x["parents"]) if x["parents"] else [],
@@ -586,7 +639,7 @@ class Service:
                      "report": self._report(x["report_hash"])} for x in subs]
         out_reports = [{"report_id": r["id"], "topic_id": r["topic_id"], "matched": r["matched_wallet"] is not None,
                         "matched_wallet": r["matched_wallet"], "score_bps": r["score_bps"]} for r in reports]
-        purchases = sum(bought.values())
+        purchases = len(buys)
         with self.tx() as conn:
             volume = conn.execute("SELECT COALESCE(SUM(amount), 0) FROM sales").fetchone()[0]
         return {

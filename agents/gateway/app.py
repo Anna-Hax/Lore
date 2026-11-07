@@ -108,10 +108,18 @@ def demo_person(name: str) -> str:
 
 
 PAGE = """<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
-<title>__T__ · Lore</title><style>body{font:16px system-ui,sans-serif;max-width:36rem;margin:3rem auto;padding:0 1rem}
-.act{font-size:1.15rem;font-weight:600;padding:.75rem 1rem;border:1px solid #8884;border-radius:.5rem}
-.btn{display:inline-block;padding:.6rem 1.2rem;border-radius:.5rem;background:#e5341b;color:#fff;text-decoration:none;
-margin-right:1rem}</style></head><body><h1>__T__</h1>__B__</body></html>"""
+<title>__T__ · Lore</title><style>
+:root{color-scheme:dark;--bg:#0c0607;--fg:#f4ecea;--muted:#b9a9a6;--line:#ffffff22;--accent:#e5341b}
+body{font:16px system-ui,sans-serif;background:var(--bg);color:var(--fg);margin:0}
+main{max-width:36rem;margin:0 auto;padding:2rem 1rem 3rem}
+.brand{display:flex;align-items:center;gap:.5rem;font-weight:700;letter-spacing:.02em;color:var(--fg);text-decoration:none}
+.brand b{color:var(--accent)}
+h1{font-size:1.6rem;margin:1.5rem 0 1rem}p{color:var(--muted);line-height:1.5}p b{color:var(--fg)}
+.act{font-size:1.15rem;font-weight:600;padding:.75rem 1rem;border:1px solid var(--line);border-radius:.5rem;color:var(--fg)}
+.btn{display:inline-block;padding:.6rem 1.2rem;border-radius:.5rem;background:var(--accent);color:#fff;text-decoration:none;
+margin-right:1rem}a{color:#ff8a73}.back{margin-top:2rem;padding-top:1rem;border-top:1px solid var(--line)}
+</style></head><body><main><a class="brand" href="/app/"><b>✦</b> lore</a><h1>__T__</h1>__B__
+<p class="back"><a href="/app/workspace.html#approvals">Back to your Lore workspace</a></p></main></body></html>"""
 
 
 def login_page(p: dict, demo: bool = False) -> str:
@@ -324,6 +332,11 @@ ask your agent to do this, close this page: nothing happens.</p>
         return {"redirect": redirect}
 
     if site_dir and Path(site_dir).is_dir():
+        @app.get("/", include_in_schema=False)
+        @app.get("/app", include_in_schema=False)
+        def to_site():  # the site lives at /app/; send bare visits there
+            return RedirectResponse("/app/", status_code=307)
+
         app.mount("/app", StaticFiles(directory=site_dir, html=True), name="site")
     app.mount("/", mcp_app)  # last: /mcp and the OAuth routes
     return app
