@@ -21,8 +21,8 @@ if (hosted()) {
   const form = document.createElement('form'); form.className = 'gateway-form';
   const label = document.createElement('label'); label.htmlFor = 'gatewayUrl'; label.textContent = 'Lore gateway address';
   const input = document.createElement('input'); input.id = 'gatewayUrl'; input.type = 'url'; input.required = true;
-  input.placeholder = 'https://your-lore-gateway.example'; input.value = 'http://127.0.0.1:8080';
-  const hint = document.createElement('p'); hint.className = 'hint'; hint.textContent = 'The default is a gateway running on this computer.';
+  input.placeholder = 'https://your-lore-gateway.example'; input.value = 'https://lore-4097bd.malaysiawest.cloudapp.azure.com';
+  const hint = document.createElement('p'); hint.className = 'hint'; hint.textContent = 'The default is the hosted Lore gateway.';
   const button = document.createElement('button'); button.className = 'primary'; button.textContent = 'Open gateway sign-in →';
   form.append(label, input, hint, button); action.append(form);
   form.onsubmit = e => {
