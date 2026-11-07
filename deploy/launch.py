@@ -16,6 +16,10 @@ REQUIRED = {
     "verifier": {"LORE_VERIFIER_KEY", "ZG_API_KEY", "ZG_STORAGE_PRIVATE_KEY", "LORE_SERVICE_TOKEN"},
     "curator": {"LORE_CURATOR_KEY", "ZG_API_KEY", "ZG_STORAGE_PRIVATE_KEY", "LORE_SERVICE_TOKEN"},
 }
+# Allowed but not required, and not hex keys. WORLD_IDP_CLIENT_SECRET: World ID Agent Pass (gateway/worldidp.py),
+# on only when compose also sets WORLD_IDP_CLIENT_ID.
+OPTIONAL = {"gateway": {"WORLD_IDP_CLIENT_SECRET"}, "verifier": set(), "curator": set()}
+FREE_FORM = {"ZG_API_KEY", "WORLD_IDP_CLIENT_SECRET"}
 
 
 def secret_environment(service: str, text: str) -> dict[str, str]:
@@ -26,12 +30,12 @@ def secret_environment(service: str, text: str) -> dict[str, str]:
         if not line or line.startswith("#"):
             continue
         name, separator, value = line.partition("=")
-        if not separator or name not in REQUIRED[service] or name in values or not value:
+        if not separator or name not in REQUIRED[service] | OPTIONAL[service] or name in values or not value:
             raise ValueError("invalid or unexpected service secret entry")
-        if name != "ZG_API_KEY" and not re.fullmatch(r"(?:0x)?[0-9a-fA-F]{64}", value):
+        if name not in FREE_FORM and not re.fullmatch(r"(?:0x)?[0-9a-fA-F]{64}", value):
             raise ValueError("invalid key encoding")
         values[name] = value
-    if set(values) != REQUIRED[service]:
+    if not REQUIRED[service] <= set(values):
         raise ValueError("required service secrets are missing")
     return values
 

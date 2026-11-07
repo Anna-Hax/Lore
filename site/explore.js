@@ -2,6 +2,7 @@
    Data: GET {API}/api/overview (live), else data/snapshot.json.
    All API text is inserted with textContent / setAttribute, never innerHTML. */
 import { format0G } from './format.js?v=11';
+import { gatewayOrigin } from './mcp-client.js?v=12';
 
 (() => {
   const SVGNS = 'http://www.w3.org/2000/svg';
@@ -137,7 +138,7 @@ import { format0G } from './format.js?v=11';
       catch (_) { /* ignore bad param */ }
       return null;
     }
-    if (/^https?:$/.test(location.protocol) && location.pathname.startsWith('/app/')) return location.origin;
+    if (/^https?:$/.test(location.protocol) && gatewayOrigin()) return location.origin;
     return null;
   }
   async function fetchJson(url, ms) {

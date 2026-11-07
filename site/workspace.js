@@ -1,4 +1,4 @@
-import { call, finishLogin, logout, loggedIn, hosted, sameOrigin, clientId } from './mcp-client.js?v=11';
+import { call, finishLogin, logout, loggedIn, hosted, sameOrigin, clientId } from './mcp-client.js?v=12';
 import { format0G, formatTokens, plural, cleanError, relativeTime, absoluteTime } from './format.js?v=11';
 
 const $ = id => document.getElementById(id);
