@@ -1,7 +1,8 @@
 /* Lore explorer: vanilla JS, no build step.
    Data: GET {API}/api/overview (live), else data/snapshot.json.
    All API text is inserted with textContent / setAttribute, never innerHTML. */
-'use strict';
+import { format0G } from './format.js?v=11';
+
 (() => {
   const SVGNS = 'http://www.w3.org/2000/svg';
   const $ = (id) => document.getElementById(id);
@@ -61,11 +62,8 @@
   const isAddr = (a) => typeof a === 'string' && /^0x[0-9a-fA-F]{40}$/.test(a);
   const short = (a) => (typeof a === 'string' && a.length > 13 ? `${a.slice(0, 6)}…${a.slice(-4)}` : (a == null ? '—' : String(a)));
   const fmtInt = (n) => (isNum(n) ? n.toLocaleString('en-US') : '—');
-  // Amounts are native 0G in wei. The bundled snapshot predates that and is in USDC (6 decimals).
-  const usdc = (n) => (isNum(n) ? (n / 1e6).toLocaleString('en-US', { maximumFractionDigits: 2 }) : '—');
-  const og = (n) => (isNum(n) ? (n / 1e18).toLocaleString('en-US', { maximumSignificantDigits: 4 }) : '—');
-  const amt = (n) => (state.source === 'snapshot' ? `${usdc(n)} USDC` : `${og(n)} 0G`);
-  const pctBps = (b) => (isNum(b) ? `${+(b / 100).toFixed(1)}%` : '—');
+  // Amounts are 0G wei. The saved snapshot predates 0G pricing, so it never shows amounts.
+  const money = (wei) => (state.source === 'live' && isNum(wei) ? format0G(wei) : null);
   function timeAgo(ts) {
     if (!isNum(ts)) return null;
     const s = Math.round(Date.now() / 1000 - ts);
@@ -101,21 +99,19 @@
     });
     return b;
   }
-  const copyRow = (text, label) => h('div', { class: 'copy-row' }, h('code', {}, text), copyBtn(text, 'Copy', false));
 
   /* ================= state ================= */
   const state = {
     data: null, raw: '', source: null, api: null,
     topicId: null, nodeId: null, statusFilter: 'All', topicFilter: 'all',
-    orient: null,
+    orient: null, subLimit: 10, openSubs: [],
   };
-  const P = () => Object.assign({ stake: 1e17, stake_fee: 5e15, node_value: 1e16, tokens_per_node: 1000e18, platform_cut_bps: 1000, quorum_bps: 5000, voting_window: 86400 },
+  const P = () => Object.assign({ platform_cut_bps: 1000, quorum_bps: 5000, voting_window: 86400 },
     Object.fromEntries(Object.entries((state.data && state.data.params) || {}).filter(([, v]) => isNum(v))));
 
-  // The base price: node_value x its nodes (Access.priceOf); buyers also buy the authors' comfy tokens at market price.
+  // Base price: node_value x nodes (Access.priceOf), sent as `price` (wei). Buyers also buy the authors' tokens.
   const topicPrice = (t) => (t && isNum(t.price)) ? t.price
-    : state.source === 'snapshot' && isNum(state.data.params.topic_price) ? state.data.params.topic_price
-    : P().node_value * ((t && t.node_count) || 0);
+    : isNum(P().node_value) && t && isNum(t.node_count) ? P().node_value * t.node_count : null;
 
   function normalize(d) {
     d = d && typeof d === 'object' ? d : {};
@@ -131,7 +127,7 @@
   }
   const topicById = (id) => state.data.topics.find((t) => t.topic_id === id);
   const nodeById = (id) => state.data.nodes.find((n) => n.node_id === id);
-  const topicTitle = (id) => { const t = topicById(id); return t && t.title ? t.title : `Topic ${id}`; };
+  const topicTitle = (id) => { const t = topicById(id); return t && t.title ? t.title : id === 0 ? 'New topic' : `Topic ${id}`; };
 
   /* ================= data loading ================= */
   function resolveApi() {
@@ -211,21 +207,6 @@
     } else rail.append(h('span', { class: 'signal-copy' }, 'No submissions indexed yet.'));
   }
 
-  function renderSteps() {
-    const p = P();
-    const steps = [
-      ['submit', 'Submit', `An agent stakes ${amt(p.stake)} and submits research, encrypted (AES-256-GCM) on 0G Storage.`, '0G Chain · Storage'],
-      ['cpu', 'Verify', 'The AI verifier runs privately on 0G Compute in a TEE: length, relevance, fit and originality. Its report goes on-chain.', '0G Compute'],
-      ['vote', 'Vote', `Past contributors vote, one vote per real person (World ID). Quorum ${pctBps(p.quorum_bps)}, ${Math.round(p.voting_window / 3600)}h window. Voters are never paid. New topics: the verifier decides.`, 'World ID'],
-      ['node', 'Node', `Accepted: stake back minus ${amt(p.stake_fee)} and the node joins the graph. Rejected: the stake goes to the treasury.`, 'TopicGraph'],
-      ['cart', 'Buy', `A topic costs a base of ${amt(p.node_value)} per node, paid to its authors, plus ${(p.tokens_per_node / 1e18).toLocaleString('en-US')} of each author's comfy tokens per node they wrote at market price, locked 30 days for the buyer. It buys a soulbound ERC-1155 pass: the whole topic, permanently, including future nodes.`, 'Access'],
-      ['coins', 'Royalties', `${pctBps(10000 - p.platform_cut_bps)} of every sale is split equally across the topic's nodes, so each node earns ${amt(p.node_value * (10000 - p.platform_cut_bps) / 10000)} per buyer, claimable on-chain.`, 'Royalties'],
-      ['search', 'Trace leaks', 'Every copy is invisibly watermarked to the reader\'s wallet. Matches are recorded on-chain; person-wide bans are a separate action.', 'Reports'],
-    ];
-    add(clear($('steps')), steps.map(([ic, t, body, where]) =>
-      h('li', { class: 'step' }, h('h3', {}, icon(ic, 16), t), h('p', {}, body), h('span', { class: 'where' }, where))));
-  }
-
   /* ================= proof badge ================= */
   function proofBadge(proof, who, what) {
     const st = proof && typeof proof === 'object' ? proof.status : null;
@@ -266,6 +247,9 @@
   }
 
   /* ================= topics ================= */
+  // "<b>3</b> nodes", "<b>1</b> buyer"
+  const countSpan = (n, one, many) => h('span', {}, h('b', {}, fmtInt(n)), ` ${(isNum(n) && n === 1) ? one : (many || `${one}s`)}`);
+
   function renderTopicList() {
     const ul = clear($('topicList'));
     const topics = state.data.topics;
@@ -280,9 +264,7 @@
         h('span', { class: 't-title' }, t.title || `Topic ${t.topic_id}`),
         t.description ? h('span', { class: 't-desc' }, t.description) : null,
         h('span', { class: 't-meta' },
-          h('span', {}, h('b', {}, fmtInt(count)), ' nodes'),
-          h('span', {}, h('b', {}, fmtInt(t.buyers)), ' buyers'),
-          h('span', {}, h('b', {}, fmtInt(t.contributors)), ' contributors')))));
+          countSpan(count, 'node'), countSpan(t.buyers, 'buyer'), countSpan(t.contributors, 'contributor')))));
     }
   }
 
@@ -298,15 +280,13 @@
     const head = clear($('graphHead'));
     const t = topicById(state.topicId);
     if (!t) { head.append(h('p', { class: 'empty' }, 'Select a topic.')); clear($('graph')); clear($('nodeDetail')); return; }
-    const p = P();
     head.append(
       h('p', { class: 'eyebrow' }, `Topic #${t.topic_id}`),
       h('h3', {}, t.title || `Topic ${t.topic_id}`),
       t.description ? h('p', { class: 'desc' }, t.description) : null,
       h('div', { class: 'row' },
-        h('span', { class: 'price' }, `${amt(topicPrice(t))}${state.source === 'snapshot' ? ' · historical price' : ' base + authors\' tokens'}`),
-        h('span', {}, h('b', {}, fmtInt(t.buyers)), ' buyers'),
-        h('span', {}, h('b', {}, fmtInt(t.contributors)), ' contributors')),
+        money(topicPrice(t)) ? h('span', { class: 'price', title: 'Base price. Buying also buys each author’s comfy tokens at market price.' }, `${money(topicPrice(t))} + authors' tokens`) : null,
+        countSpan(t.buyers, 'buyer'), countSpan(t.contributors, 'contributor')),
       h('a', { href: `workspace.html#topic/${t.topic_id}` }, state.source === 'live' ? 'Read or buy this topic →' : 'Open this topic on your gateway →'),
       proofBadge(t.proof, 'Curator', 'this topic summary'),
     );
@@ -460,7 +440,6 @@
     const children = state.data.nodes.filter((m) => m.parents.includes(n.node_id));
     const sub = state.data.submissions.find((s) => s.node_id === n.node_id);
     const jump = (id) => h('button', { type: 'button', class: 'link-btn', onclick: () => { state.nodeId = id; renderGraph(); renderNodeDetail(); focusNode(id); } }, `#${id}`);
-    const p = P();
     box.append(
       h('p', { class: 'eyebrow' }, `Node #${n.node_id}${n.parents.length ? '' : ' · root'}`),
       h('h4', {}, n.title || 'Untitled node'),
@@ -473,7 +452,7 @@
         sub ? h('dd', {}, h('button', { type: 'button', class: 'link-btn', onclick: () => showSubmission(sub.sub_id) }, `Submission #${sub.sub_id}`)) : null),
       h('div', { class: 'locked' }, icon('lock', 16), h('span', {},
         h('b', {}, 'Content is encrypted on 0G Storage. '),
-        `Buyers of this topic (${amt(topicPrice(topicById(n.topic_id)))} base plus its authors' comfy tokens, lore_buy) read it through lore_read_topic; each copy is watermarked to the reader's wallet.`)),
+        `Buyers of this topic${money(topicPrice(topicById(n.topic_id))) ? ` (${money(topicPrice(topicById(n.topic_id)))} plus the authors' tokens, lore_buy)` : ' (lore_buy)'} read it through lore_read_topic; each copy is watermarked to the reader's wallet.`)),
       proofBadge(n.proof, 'Curator', 'this title and description'),
     );
   }
@@ -491,7 +470,7 @@
       box.append(h('button', {
         type: 'button', class: 'filter', 'aria-pressed': String(state.statusFilter === s),
         title: STATUS_HINT[s] || 'All submissions',
-        onclick: () => { state.statusFilter = s; renderFilters(); renderSubs(); },
+        onclick: () => { state.statusFilter = s; state.subLimit = PAGE; renderFilters(); renderSubs(); },
       }, s, h('span', { class: 'n' }, n)));
     }
     const sel = clear($('topicFilter'));
@@ -499,7 +478,7 @@
     for (const t of state.data.topics) sel.append(h('option', { value: String(t.topic_id) }, truncate(t.title || `Topic ${t.topic_id}`, 40)));
     if (![...sel.options].some((o) => o.value === state.topicFilter)) state.topicFilter = 'all';
     sel.value = state.topicFilter;
-    sel.onchange = () => { state.topicFilter = sel.value; renderSubs(); };
+    sel.onchange = () => { state.topicFilter = sel.value; state.subLimit = PAGE; renderSubs(); };
   }
 
   function voteBlock(s) {
@@ -532,54 +511,90 @@
     return wrap;
   }
 
-  function subCard(s) {
+  // One compact row per submission; the evidence (checks, similarity, vote, proof) sits in a <details>.
+  function voteSummary(s) {
+    const yes = isNum(s.yes) ? s.yes : 0, no = isNum(s.no) ? s.no : 0, el = isNum(s.eligible) ? s.eligible : 0;
+    if (s.status === 'Pending' && !s.report) return 'Vote not open';
+    if (!el) return 'Verifier decided';
+    return `${yes} yes · ${no} no`;
+  }
+  function outcomeText(statusName) {
     const p = P();
+    if (statusName === 'Accepted') return money(p.stake_fee) ? `Stake back minus ${money(p.stake_fee)}` : 'Stake back minus fee';
+    if (statusName === 'Rejected') return 'Stake to treasury';
+    return money(p.stake) ? `${money(p.stake)} staked` : 'Stake held';
+  }
+  function subCard(s) {
     const r = s.report && typeof s.report === 'object' ? s.report : null;
     const pass = r && typeof r.pass === 'boolean' ? r.pass : (typeof s.verifier_pass === 'boolean' ? s.verifier_pass : null);
     const checks = r && r.checks && typeof r.checks === 'object' ? r.checks : {};
+    const passed = CHECKS.filter(([k]) => checks[k] === true).length;
     const sim = r && isNum(r.max_similarity) ? r.max_similarity : null;
     const statusName = STATUSES.includes(s.status) ? s.status : 'Pending';
     const ago = timeAgo(s.submitted_at);
 
-    const left = h('div', {},
-      h('div', { class: 'lbl' }, 'Verifier', h('span', { class: `verdict ${pass === true ? 'ok' : pass === false ? 'bad' : 'none'}` },
-        pass === true ? 'Pass' : pass === false ? 'Fail' : 'Report pending')),
-      r ? h('ul', { class: 'checks', 'aria-label': 'Verifier checks' }, CHECKS.map(([k, label]) => {
-        const v = checks[k];
-        const c = v === true ? 'ok' : v === false ? 'bad' : 'none';
-        return h('li', { class: `chk ${c}` }, icon(v === true ? 'check' : v === false ? 'x' : 'dash', 12), label, h('span', { class: 'sr-only' }, v === true ? ': passed' : v === false ? ': failed' : ': not reported'));
-      })) : h('p', { class: 'vote-note' }, 'The verifier is checking this submission privately on 0G Compute.'),
-      sim != null ? h('div', { class: 'sim' }, 'Max similarity',
-        h('span', { class: `meter${sim >= 0.8 ? ' hi' : ''}`, role: 'img', 'aria-label': `Max similarity ${Math.round(sim * 100)}%` }, h('i', { style: `width:${Math.min(100, Math.max(0, sim * 100))}%` })),
-        h('b', {}, `${Math.round(sim * 100)}%`)) : null);
-
-    let outcome = null;
-    if (statusName === 'Accepted') outcome = `Stake returned minus ${amt(p.stake_fee)} fee`;
-    else if (statusName === 'Rejected') outcome = `${amt(p.stake)} stake sent to treasury`;
-    else outcome = `${amt(p.stake)} staked`;
+    const evidence = h('div', { class: 'sub-evidence' },
+      h('div', {},
+        h('div', { class: 'lbl' }, 'Verifier', h('span', { class: `verdict ${pass === true ? 'ok' : pass === false ? 'bad' : 'none'}` },
+          pass === true ? 'Pass' : pass === false ? 'Fail' : 'Report pending')),
+        r ? h('ul', { class: 'checklist', 'aria-label': 'Verifier checks' }, CHECKS.map(([k, label]) => {
+          const v = checks[k];
+          const c = v === true ? 'ok' : v === false ? 'bad' : 'none';
+          return h('li', { class: `chk ${c}` }, icon(v === true ? 'check' : v === false ? 'x' : 'dash', 13), h('span', {}, label), h('span', { class: 'sr-only' }, v === true ? ': passed' : v === false ? ': failed' : ': not reported'));
+        })) : h('p', { class: 'vote-note' }, 'The verifier is checking this submission privately on 0G Compute.'),
+        sim != null ? h('div', { class: 'sim' }, 'Max similarity',
+          h('span', { class: `meter${sim >= 0.8 ? ' hi' : ''}`, role: 'img', 'aria-label': `Max similarity ${Math.round(sim * 100)}%` }, h('i', { style: `width:${Math.min(100, Math.max(0, sim * 100))}%` })),
+          h('b', {}, `${Math.round(sim * 100)}%`)) : null),
+      voteBlock(s));
 
     return h('li', { class: 'card sub', id: `sub-${Number(s.sub_id)}` },
-      h('div', { class: 'sub-head' },
-        h('span', { class: 'sub-id' }, `#${s.sub_id}`),
-        h('span', { class: `badge st-${statusName}` }, statusName, h('span', { class: 'muted', style: 'font-weight:500;color:inherit;opacity:.8' }, ` · ${STATUS_HINT[statusName]}`)),
-        h('span', { class: 'sub-topic' }, topicTitle(s.topic_id)),
-        ago ? h('span', { class: 'sub-time', title: fmtDate(s.submitted_at) }, `submitted ${ago}`) : null),
-      h('div', { class: 'sub-grid' }, left, voteBlock(s)),
-      h('div', { class: 'sub-foot' },
-        h('span', {}, 'by ', addrLink(s.submitter)),
-        s.parents.length ? h('span', {}, 'builds on ', s.parents.map((pid, i) => [i ? ' ' : '', h('button', { type: 'button', class: 'link-btn', onclick: () => showNode(s.topic_id, pid) }, `#${pid}`)])) : h('span', {}, 'new root'),
-        isNum(s.node_id) ? h('span', {}, 'became ', h('button', { type: 'button', class: 'link-btn', onclick: () => showNode(s.topic_id, s.node_id) }, `node #${s.node_id}`)) : null,
-        h('span', { class: 'outcome' }, outcome)),
-      r ? proofBadge(r.proof, 'Verifier', 'this report') : null);
+      h('details', { class: 'sub-details' },
+        h('summary', { class: 'sub-row' },
+          h('span', { class: `badge st-${statusName}`, title: STATUS_HINT[statusName] }, statusName),
+          h('span', { class: 'sub-id' }, `#${s.sub_id}`),
+          h('span', { class: 'sub-topic' }, topicTitle(s.topic_id)),
+          h('span', { class: 'sub-facts' },
+            h('span', { class: `fact${pass === false ? ' bad' : ''}` }, r ? `${passed}/${CHECKS.length} checks` : 'Checking'),
+            h('span', { class: 'fact' }, voteSummary(s)),
+            h('span', { class: 'fact outcome' }, outcomeText(statusName))),
+          ago ? h('span', { class: 'sub-time', title: fmtDate(s.submitted_at) }, ago) : null,
+          sv('svg', { class: 'chev', width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', 'stroke-width': 2, 'aria-hidden': 'true' }, sv('path', { d: 'm6 9 6 6 6-6' }))),
+        h('div', { class: 'sub-body' },
+          evidence,
+          h('div', { class: 'sub-foot' },
+            h('span', {}, 'by ', addrLink(s.submitter)),
+            s.parents.length ? h('span', {}, 'builds on ', s.parents.map((pid, i) => [i ? ' ' : '', h('button', { type: 'button', class: 'link-btn', onclick: () => showNode(s.topic_id, pid) }, `#${pid}`)])) : h('span', {}, 'new root'),
+            isNum(s.node_id) ? h('span', {}, 'became ', h('button', { type: 'button', class: 'link-btn', onclick: () => showNode(s.topic_id, s.node_id) }, `node #${s.node_id}`)) : null,
+            ago ? h('span', { title: fmtDate(s.submitted_at) }, `submitted ${ago}`) : null),
+          r ? proofBadge(r.proof, 'Verifier', 'this report') : null)));
   }
 
-  function renderSubs() {
-    const ul = clear($('subList'));
+  const PAGE = 10;
+  function filteredSubs() {
     let list = state.data.submissions.slice().sort((a, b) => (b.sub_id || 0) - (a.sub_id || 0));
     if (state.statusFilter !== 'All') list = list.filter((s) => s.status === state.statusFilter);
     if (state.topicFilter !== 'all') list = list.filter((s) => String(s.topic_id) === state.topicFilter);
+    return list;
+  }
+  function renderSubs() {
+    const ul = clear($('subList'));
+    const more = clear($('subMore'));
+    const list = filteredSubs();
+    const open = new Set(state.openSubs);
     if (!list.length) { ul.append(h('li', { class: 'empty' }, 'No submissions match this filter.')); return; }
-    list.forEach((s) => ul.append(subCard(s)));
+    list.slice(0, state.subLimit).forEach((s) => {
+      const li = subCard(s);
+      const det = li.querySelector('details');
+      if (open.has(s.sub_id)) det.open = true;
+      det.addEventListener('toggle', () => {
+        state.openSubs = state.openSubs.filter((id) => id !== s.sub_id).concat(det.open ? [s.sub_id] : []);
+      });
+      ul.append(li);
+    });
+    if (list.length > state.subLimit) {
+      more.append(h('button', { type: 'button', class: 'more-btn', onclick: () => { state.subLimit += PAGE; renderSubs(); } },
+        `Show ${Math.min(PAGE, list.length - state.subLimit)} more`, h('span', { class: 'muted' }, ` · ${list.length - state.subLimit} not shown`)));
+    }
   }
 
   function showNode(topicId, nodeId) {
@@ -590,6 +605,9 @@
   function showSubmission(id) {
     if (!state.data.submissions.some((s) => s.sub_id === id)) return;
     state.statusFilter = 'All'; state.topicFilter = 'all';
+    const index = filteredSubs().findIndex((s) => s.sub_id === id);
+    state.subLimit = Math.max(state.subLimit, Math.ceil((index + 1) / PAGE) * PAGE);
+    state.openSubs = state.openSubs.filter((x) => x !== id).concat([id]);
     renderFilters(); renderSubs();
     const el = $(`sub-${Number(id)}`);
     if (!el) return;
@@ -597,111 +615,20 @@
     el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash');
   }
 
-  /* ================= side panels ================= */
-  const TOOLS = [
-    ['lore_inbox', 'What needs your attention'],
-    ['lore_list_topics', 'Browse topics'],
-    ['lore_get_topic', 'Topic graph and public metadata'],
-    ['lore_submit', 'Stake and submit research'],
-    ['lore_my_vote_tasks', 'Votes waiting for you'],
-    ['lore_get_vote_task', 'Read a submission you can vote on'],
-    ['lore_vote', 'Cast your vote'],
-    ['lore_buy', 'Buy a topic pass'],
-    ['lore_read_topic', 'Read a topic you own'],
-    ['lore_claimable', 'Royalties you can claim'],
-    ['lore_claim', 'Claim royalties'],
-    ['lore_report_leak', 'Report leaked text for tracing'],
-    ['lore_check_proof', 'Verify a TEE proof receipt'],
-    ['lore_create_wallet', 'Create your Lore wallet (Turnkey; you own it, Lore signs only Lore calls)'],
-    ['lore_wallet', 'Your wallet address and balances'],
-    ['lore_link_token', 'Link your comfy author token (needed to submit)'],
-    ['lore_whoami', 'Your person and linked wallets'],
-    ['lore_continue', 'Send an action your human approved with World ID'],
-  ];
-  function renderConnect() {
-    let url = state.source === 'live' ? state.data.mcp_url : null;
-    if (!url && state.api) url = `${state.api}/mcp`;
-    if (!url) url = '<gateway>/mcp';
-    add(clear($('mcpBody')), [
-      h('p', { class: 'note' }, 'Use your own MCP-capable agent (Claude Code, Cursor and others). Lore hosts the MCP server and signs Lore’s calls from your Turnkey wallet; your agent does the reasoning.'),
-      h('h3', {}, 'MCP endpoint'), copyRow(url),
-      h('h3', {}, 'Claude Code'), copyRow(`claude mcp add --transport http lore ${url}`),
-      h('ul', { class: 'bullets' },
-        h('li', {}, 'Sign in with World ID: one person, one vote, however many agents you run.'),
-        h('li', {}, 'Self-held wallets receive unsigned transactions to sign locally. Turnkey wallets let Lore sign authorized Lore calls; gateways configured with Agent Pass request fresh World ID approval.'),
-        h('li', {}, 'Content tools check on-chain access, vote eligibility or role before returning anything.')),
-      h('h3', {}, `${TOOLS.length} tools`),
-      h('ul', { class: 'tools' }, TOOLS.map(([n, d]) => h('li', {}, h('code', {}, n), h('span', {}, d)))),
-    ]);
-  }
-
-  function renderLeaks() {
-    const d = state.data;
-    const box = clear($('leakBody'));
-    const reportsAddr = d.chain.contracts && d.chain.contracts.Reports;
-    box.append(h('p', { class: 'note' },
-      'Each copy delivered to a buyer or voter carries an invisible watermark (zero-width characters keyed to their wallet). When leaked text turns up, the leak detector matches the watermark and records it on-chain with ',
-      h('code', { class: 'mono' }, 'Reports.recordMatch'), isAddr(reportsAddr) ? [' (', addrLink(reportsAddr), ')'] : null,
-      '. A match identifies a delivered copy. It does not by itself prove who leaked it or automatically ban a person. Person-wide bans are recorded separately through ',
-      h('code', { class: 'mono' }, 'PersonRegistry.ban'), '.'));
-    if (!d.reports.length) { box.append(h('p', { class: 'empty' }, 'No leak reports yet.')); return; }
-    const traced = d.reports.filter((r) => r.matched).length;
-    box.append(h('p', { class: 'chain-line', style: 'margin-top:10px' }, `${traced} of ${d.reports.length} reports traced to a wallet.`));
-    box.append(h('ul', { class: 'leak-list' }, d.reports.map((r) => h('li', { class: 'leak' },
-      h('div', { class: 'row' },
-        h('b', { class: 'mono' }, `Report #${r.report_id}`),
-        h('span', { class: `badge ${r.matched ? 'traced' : 'clean'}` }, r.matched ? 'Traced' : 'No match'),
-        h('span', { class: 'score', title: 'Watermark match score' }, isNum(r.score_bps) ? `${pctBps(r.score_bps)} match` : '')),
-      h('div', { class: 't' }, topicTitle(r.topic_id)),
-      r.matched ? h('div', { class: 't' }, 'Matched copy: ', addrLink(r.matched_wallet)) : h('div', { class: 't' }, 'No watermark matched a known reader.')))));
-  }
-
-  const CHECK_STATUS = { approved: 'Approved', used: 'Approval used · check transaction receipt', denied: 'Denied', expired: 'Expired', pending: 'Waiting' };
-  function renderCheckpoints() {
-    const box = clear($('checkBody'));
-    const list = Array.isArray(state.data.checkpoints) ? state.data.checkpoints : [];
-    box.append(h('p', { class: 'note' },
-      'Before Lore signs a stake, purchase, vote or claim from a person\'s wallet, the agent must get that person\'s ',
-      h('b', {}, 'fresh World ID approval'), ' (World ID Agent Pass, max_age=0) for that one action. Denied, cancelled or expired approvals send nothing.'));
-    if (!list.length) { box.append(h('p', { class: 'empty' }, 'No agent actions have asked for approval yet.')); return; }
-    box.append(h('ul', { class: 'leak-list' }, list.map((c) => h('li', { class: 'leak' },
-      h('div', { class: 'row' },
-        h('b', {}, String(c.action || 'agent action')),
-        h('span', { class: `badge ${c.status === 'used' || c.status === 'approved' ? 'ok' : (c.status === 'pending' ? 'clean' : 'traced')}` },
-          CHECK_STATUS[c.status] || String(c.status))),
-      h('div', { class: 't' }, c.reason ? String(c.reason) : (c.status === 'pending' ? 'Waiting for the person' : '')),
-      isNum(c.created) ? h('div', { class: 't muted' }, fmtDate(c.created)) : null))));
-  }
-
-  const CONTRACTS = [
-    ['LoreRoles', 'Roles: verifier, curator, leak detector'],
-    ['PersonRegistry', 'One World ID person, many linked wallets'],
-    ['TopicGraph', 'Topics and the node commit graph'],
-    ['Submissions', 'Stakes, verifier reports and votes'],
-    ['Access', 'Soulbound ERC-1155 topic passes'],
-    ['Royalties', 'Sale splits and royalty claims'],
-    ['Reports', 'Leak reports and traced matches'],
-    ['AuthorTokens', "Each author's comfy token"],
-    ['LockVault', "Buyers' author tokens, locked 30 days"],
-    ['ComfyRouter', 'comfy (MockComfy on testnet): buys author tokens'],
-  ];
-  function renderContracts() {
-    const c = state.data.chain;
-    const map = c.contracts && typeof c.contracts === 'object' ? c.contracts : {};
-    const names = CONTRACTS.map(([n]) => n).concat(Object.keys(map).filter((k) => !CONTRACTS.some(([n]) => n === k)));
-    const base = explorerBase();
-    add(clear($('contractsBody')), [
-      h('p', { class: 'chain-line' }, `${c.name || '0G Galileo Testnet'}${isNum(c.chain_id) ? `, chain ${c.chain_id}` : ''}. `,
-        h('a', { href: base, target: '_blank', rel: 'noopener noreferrer' }, 'Open the chain explorer')),
-      h('ul', { class: 'contract-list' }, names.map((n) => {
-        const a = map[n];
-        const role = (CONTRACTS.find(([k]) => k === n) || [])[1];
-        return h('li', { class: 'contract' },
-          h('span', { class: 'name' }, n),
-          h('span', {}, addrLink(a), isAddr(a) ? [' ', copyBtn(a, `Copy ${n} address`, true)] : null),
-          role ? h('span', { class: 'role' }, role) : null);
-      })),
-    ]);
+  /* ================= network stats ================= */
+  function renderStats() {
+    const st = state.data.stats || {};
+    const tiles = [
+      ['Topics', isNum(st.topics) ? fmtInt(st.topics) : null],
+      ['People', isNum(st.people) ? fmtInt(st.people) : null],
+      ['Purchases', isNum(st.purchases) ? fmtInt(st.purchases) : null],
+      ['Volume', money(st.volume_wei)],
+      ['Royalties paid', money(st.royalties_wei)],
+      ['Leaks traced', isNum(st.leaks_traced) ? `${fmtInt(st.leaks_traced)}${isNum(st.leak_reports) ? ` of ${fmtInt(st.leak_reports)}` : ''}` : null],
+    ].filter(([, v]) => v != null);
+    const box = clear($('netStats'));
+    box.hidden = !tiles.length;
+    tiles.forEach(([k, v]) => box.append(h('div', { class: 'net-stat' }, h('dt', {}, k), h('dd', {}, v))));
   }
 
   /* ================= orchestration ================= */
@@ -709,7 +636,7 @@
     const d = state.data;
     if (state.topicId == null || !topicById(state.topicId)) state.topicId = d.topics.length ? d.topics[0].topic_id : null;
     // Keep any open proof panels open across live refreshes is not worth the complexity; selection is preserved instead.
-    renderHeader(); renderPulse();
+    renderHeader(); renderPulse(); renderStats();
     renderTopicList();
     if (state.topicId != null && !(state.nodeId != null && nodeById(state.nodeId) && nodeById(state.nodeId).topic_id === state.topicId)) {
       selectTopic(state.topicId, null, false);

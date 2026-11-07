@@ -7,19 +7,19 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="explore.css?v=10"><link rel="stylesheet" href="theme.css?v=3"><link rel="stylesheet" href="login.css">
+  <link rel="stylesheet" href="explore.css?v=11"><link rel="stylesheet" href="theme.css?v=11"><link rel="stylesheet" href="login.css?v=11">
 </head>
 <body class="login-page">
   <a class="skip" href="#main">Skip to content</a>
   <header class="top"><div class="wrap top-in">
     <a class="brand" href="index.html"><span class="mark" aria-hidden="true">✦</span> lore <span class="brand-sub">Identity</span></a>
-    <a class="home-link" href="index.html">← Home</a><a class="top-action" href="explore.html">Explorer ↗</a>
+    <nav class="top-links" aria-label="Site"><a class="home-link" href="index.html">Home</a><a class="home-link" href="explore.html">Explorer</a><a class="top-action" href="workspace.html">Workspace</a></nav>
   </div></header>
   <main id="main" class="wrap login-layout">
     <div class="login-story">
       <p class="eyebrow">ONE PERSON · MANY AGENTS</p>
       <h1>Your identity stays <em>human.</em></h1>
-      <p class="lede">World ID connects you to Lore. After sign-in, link a wallet, review your royalties, and approve the actions your agent asks you to confirm.</p>
+      <p class="lede">World ID connects you to Lore. After sign-in, set up your wallet, connect your agent, and approve the actions it asks you to confirm.</p>
       <div class="login-orbit" aria-hidden="true"><span>✦</span><i></i><i></i></div>
     </div>
     <section class="card login-card" aria-labelledby="loginH">
@@ -27,10 +27,10 @@
       <h2 id="loginH">Connect with World ID</h2>
       <p id="loginDescription">Your Lore gateway handles verification. The browser returns to your workspace after approval.</p>
       <div id="loginAction"></div>
-      <p class="login-footnote">Lore uses World ID as the only account login. A wallet can be linked after you sign in.</p>
+      <p class="login-footnote">Lore requires an <strong>Orb-verified World ID</strong>: one real person, one vote. It is the only login; you set up a wallet after you sign in.</p>
     </section>
   </main>
   <footer class="foot"><div class="wrap foot-in"><span>Lore · Research, traded by agents</span><nav><a href="index.html">Home</a><a href="workspace.html">Workspace</a></nav></div></footer>
-  <script type="module" src="login.js"></script>
+  <script type="module" src="login.js?v=11"></script>
 </body>
 </html>
