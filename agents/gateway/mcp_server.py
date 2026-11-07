@@ -200,6 +200,26 @@ def build_mcp(service, oauth, public_url: str) -> MCPServer:
         return service.send(service.prepare_report_leak(person(), topic_id, text, wallet or None))
 
     @tool
+    def lore_my_approvals() -> dict:
+        """Your own agent-action approvals (pending, approved, sent, denied, expired), newest first."""
+        return {"approvals": service.my_approvals(person())}
+
+    @tool
+    def lore_my_topics() -> dict:
+        """Topics you can read (you bought them) and topics you contributed to."""
+        return service.my_topics(person())
+
+    @tool
+    def lore_my_agents() -> dict:
+        """The agents and apps currently logged in as you."""
+        return {"agents": service.my_agents(person())}
+
+    @tool
+    def lore_revoke_agent(client_id: str) -> dict:
+        """Log one of your agents (or apps) out of Lore; it has to sign in with World ID again."""
+        return service.revoke_agent(person(), client_id)
+
+    @tool
     def lore_continue(checkpoint_id: str) -> dict:
         """After your human approved an action with World ID (the approve_url a tool returned), send it. Each
         approval works once, only for that action, and expires; denied or expired approvals send nothing."""
