@@ -1,4 +1,4 @@
-import { hosted, loggedIn, login } from './mcp-client.js';
+import { hosted, loggedIn, login } from './mcp-client.js?v=11';
 
 const action = document.getElementById('loginAction');
 const description = document.getElementById('loginDescription');
@@ -18,11 +18,13 @@ if (hosted()) {
   }
 } else {
   description.textContent = 'Open this page on your Lore gateway to verify with World ID. The local preview cannot verify an identity.';
-  const form = document.createElement('form');
-  const label = document.createElement('label'); label.textContent = 'Lore gateway address';
-  const input = document.createElement('input'); input.type = 'url'; input.required = true; input.placeholder = 'https://your-lore-gateway.example'; label.append(input);
+  const form = document.createElement('form'); form.className = 'gateway-form';
+  const label = document.createElement('label'); label.htmlFor = 'gatewayUrl'; label.textContent = 'Lore gateway address';
+  const input = document.createElement('input'); input.id = 'gatewayUrl'; input.type = 'url'; input.required = true;
+  input.placeholder = 'https://your-lore-gateway.example'; input.value = 'http://127.0.0.1:8080';
+  const hint = document.createElement('p'); hint.className = 'hint'; hint.textContent = 'The default is a gateway running on this computer.';
   const button = document.createElement('button'); button.className = 'primary'; button.textContent = 'Open gateway sign-in →';
-  form.append(label, button); action.append(form);
+  form.append(label, input, hint, button); action.append(form);
   form.onsubmit = e => {
     e.preventDefault();
     try {

@@ -65,6 +65,8 @@ test('landing and explorer use only active destinations, with public data and Lo
   assert.equal(new URL(page.url()).hash, '#agent');
   await page.goto(origin + '/explore.html');
   await page.locator('#topicList li').first().waitFor();
+  await page.locator('#netStats .net-stat').first().waitFor();
+  assert.equal((await page.locator('body').textContent()).includes('USDC'), false); // the saved snapshot shows no prices
   assert.equal(await page.locator('#steps,#mcpBody,#leakBody,#checkBody,#contractsBody,#stats').count(), 0);
   assert.equal(await page.locator('.lore-art #lore-line').count(), 1);
   assert(await page.getByRole('link', { name: 'Open this topic on your gateway' }).count() > 0);
@@ -87,6 +89,7 @@ test('workspace has meaningful human sections, not agent action forms or duplica
   await page.screenshot({ path: '/tmp/lore-workspace-simple-mobile.png', fullPage: true });
   await page.goto(origin + '/login.html');
   await page.getByLabel('Lore gateway address').waitFor();
+  assert.equal(await page.getByLabel('Lore gateway address').inputValue(), 'http://127.0.0.1:8080');
   assert.equal(await page.getByRole('button', { name: 'Continue with World ID' }).count(), 0);
   await page.screenshot({ path: '/tmp/lore-login-mobile.png', fullPage: true });
   assert.deepEqual(errors, []); await context.close();
@@ -121,6 +124,24 @@ test('topic buy and gated reading remain human controls, with review and approva
   assert(!calls.some(item => item.params?.name === 'lore_continue'));
   await page.getByRole('link', { name: 'Sign out' }).click();
   assert.equal(await page.locator('.research').count(), 0);
+  assert.deepEqual(errors, []); await context.close();
+});
+
+test('purchase review shows the 0G quote, slippage cap and token lock; sign-out clears the page first', async () => {
+  const quote = { base_wei: '20000000000000000', total_wei: '30000000000000000',
+    authors: [{ author: wallet, token: '0x' + '2'.repeat(40), nodes: 1, amount: '1000000000000000000', cost_wei: '10000000000000000' }] };
+  const { page, context, errors } = await setup({ responses: { lore_buy: { confirm: 'quote', quote }, lore_my_topics: { owned: [], contributed: [1] } } });
+  await page.goto(origin + '/app/workspace.html#topic/1');
+  await page.getByRole('button', { name: 'Review purchase' }).click();
+  const dialog = page.locator('dialog[open]');
+  await dialog.waitFor();
+  const text = await dialog.textContent();
+  for (const part of ['0.02 0G', '0.01 0G', '0.03 0G', '0.0309 0G', 'unspent 0G is refunded', '30 days']) assert(text.includes(part), part);
+  assert.equal(await page.getByRole('button', { name: 'Read my copy' }).count(), 0); // not owned
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await page.getByRole('link', { name: 'Sign out' }).click();
+  const main = await page.locator('#main').textContent();
+  assert(!main.includes('0xperson') && !main.includes('Research fixture'));
   assert.deepEqual(errors, []); await context.close();
 });
 

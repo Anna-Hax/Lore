@@ -14,3 +14,29 @@
 @media(max-width:760px){.workspace-main{padding-top:30px}.workspace-hero{padding:25px 0 30px}.workspace-grid{grid-template-columns:1fr}.workspace-section,#topicAccess{padding-top:42px}.workspace-main .tools{grid-template-columns:1fr}.workspace-hero::after{right:-110px;top:-60px;font-size:260px}}
 @media(max-width:560px){.connection-pill{order:4;margin-left:0}.workspace-hero h1{font-size:clamp(38px,10vw,48px)}.workspace-hero>p:last-child{font-size:15px}.workspace-main .panel{padding:19px}.copy-row{flex-wrap:wrap}.copy-row code{flex-basis:100%}}
 @media(prefers-reduced-motion:reduce){.workspace-hero::after{animation:none}}
+
+/* Guided setup and account panels */
+.setup-steps{list-style:none;margin:0;padding:0;display:grid;gap:14px}
+.setup-step{display:grid;grid-template-columns:40px minmax(0,1fr);gap:16px;padding:clamp(18px,2.4vw,26px);border:1px solid var(--line);border-radius:14px;background:linear-gradient(160deg,rgba(255,255,255,.04),rgba(255,255,255,.01) 70%),var(--surface)}
+.setup-step.done{border-color:rgba(124,218,167,.3)}
+.step-mark{width:36px;height:36px;border-radius:50%;display:grid;place-items:center;font:700 15px var(--display);border:1px solid var(--line-strong);color:var(--ink);background:var(--surface-2)}
+.setup-step.done .step-mark{background:var(--ok-bg);border-color:var(--ok);color:var(--ok)}
+.step-body{min-width:0}.step-body h3{font:700 clamp(17px,1.8vw,21px)/1.25 var(--display);display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:6px 0 10px}
+.step-body p{line-height:1.65}.step-body>p+p{margin-top:8px}.step-body>.button{margin-top:14px}.step-body .account-identity{margin:4px 0 0}
+.tag{display:inline-flex;align-items:center;font:600 11px/1.4 var(--body);letter-spacing:0;text-transform:none;padding:3px 9px;border-radius:99px;background:var(--surface-2);color:var(--muted);border:1px solid var(--line);white-space:nowrap}
+.tag.ok{color:var(--ok);background:var(--ok-bg);border-color:transparent}.tag.warn{color:var(--warn);background:var(--warn-bg);border-color:transparent}.tag.bad{color:var(--bad);background:var(--bad-bg);border-color:transparent}
+.small{font-size:13px}.ok-note{color:var(--ok);margin-top:12px}
+.warn-note{padding:11px 14px;border-left:3px solid var(--warn);background:var(--warn-bg);border-radius:8px;margin:12px 0;line-height:1.6}
+.secondary-option{margin-top:18px;padding-top:16px;border-top:1px dashed var(--line)}.secondary-option button{margin-top:10px}
+.workspace-main .inline-form label,dialog .inline-form label{margin:0 0 7px}.inline-form{margin:14px 0 0}.inline-form .muted{margin-top:8px}
+.field-row{display:flex;gap:10px;flex-wrap:wrap}.workspace-main .field-row input{flex:1 1 220px;width:auto;min-width:0}.field-row button{flex:none}
+.wallet-list{list-style:none;padding:0;margin:14px 0 0;display:grid;gap:10px}.wallet-list>li{padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:rgba(255,255,255,.015);min-width:0;overflow-wrap:anywhere}.wallet-list .copy-row{margin-bottom:0}
+.wallet-head{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px}.balance{font:700 18px var(--display)}
+.activity-head{font:700 clamp(18px,2vw,22px)/1.2 var(--display);text-transform:uppercase;letter-spacing:-.02em;margin:44px 0 16px}
+.topic-links{list-style:none;padding:0;margin:6px 0 0;display:grid;gap:6px}.workspace-main .panel .topic-links+.button,.workspace-main .panel p+.button{margin-top:16px}
+.amount-note{font:500 15px var(--body);color:var(--muted);letter-spacing:0}
+.quote{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:8px 16px;margin:14px 0;font-size:14px}.quote dt{color:var(--muted)}.quote dd{margin:0;overflow-wrap:anywhere}
+dialog .record-list{list-style:none;padding:0;margin:10px 0;display:grid;gap:8px}dialog .record-list li{padding:10px 12px;border:1px solid var(--line);border-radius:8px}dialog .record-list p{margin:2px 0}dialog details{margin-top:6px}dialog summary{cursor:pointer;font-weight:600}
+@media(max-width:560px){.setup-step{grid-template-columns:28px minmax(0,1fr);gap:10px;padding:16px 14px}.step-mark{width:28px;height:28px;font-size:13px}.step-body h3{margin-top:2px}.quote{grid-template-columns:1fr;gap:2px}.quote dd{margin-bottom:8px}}
+#topicAccess .panel h3{text-transform:none;letter-spacing:-.02em;color:var(--ink)}
+.workspace-main .panel p+button,.workspace-main .panel .record-list+button{margin-top:14px}

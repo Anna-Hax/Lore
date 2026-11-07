@@ -8,6 +8,8 @@ const b64 = bytes => btoa(String.fromCharCode(...bytes)).replaceAll('+', '-').re
 const random = () => b64(crypto.getRandomValues(new Uint8Array(32)));
 export const hosted = () => location.pathname.startsWith('/app/');
 export const loggedIn = () => Boolean(read(SESSION)?.access_token);
+/* The OAuth client this tab registered, so the workspace can mark "this browser" among your agents. */
+export const clientId = () => read(SESSION)?.client_id || null;
 export function sameOrigin(url) {
   const u = new URL(url, location.origin);
   if (u.origin !== location.origin || u.username || u.password) throw new Error('The gateway returned an unexpected address.');
